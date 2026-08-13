@@ -1,0 +1,91 @@
+export type AccountStatus =
+  | 'WAIT_LOGIN'
+  | 'ACTIVE'
+  | 'IN_USE'
+  | 'LOGIN_EXPIRED'
+  | 'DISABLED'
+  | 'ERROR'
+
+export type TaskStatus = 'PENDING' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'CANCELLED'
+
+export type SessionStatus =
+  | 'CREATING'
+  | 'READY'
+  | 'LOGIN'
+  | 'RUNNING'
+  | 'COMPLETED'
+  | 'FAILED'
+  | 'CLOSED'
+
+export type GridStatus = 'ONLINE' | 'OFFLINE' | 'ERROR' | 'UNKNOWN'
+
+export interface GridInstance {
+  id: number
+  name: string
+  hub_url: string
+  novnc_base_url: string | null
+  status: GridStatus
+  max_sessions: number
+  notes: string
+  created_at: string | null
+  updated_at: string | null
+}
+
+export interface Account {
+  id: number
+  name: string
+  platform: string
+  profile_path: string
+  status: AccountStatus
+  notes: string
+  grid_id: number | null
+  grid?: GridInstance
+  last_login_at: string | null
+  last_check_at: string | null
+  last_used_at: string | null
+  created_at: string | null
+  updated_at: string | null
+}
+
+export interface BrowserSession {
+  id: number
+  account_id: number
+  grid_session_id: string | null
+  novnc_url: string | null
+  status: SessionStatus
+  created_at: string | null
+  closed_at: string | null
+}
+
+export interface Task {
+  id: number
+  account_id: number
+  type: string
+  params: string
+  status: TaskStatus
+  result: string | null
+  error: string | null
+  created_at: string | null
+  started_at: string | null
+  completed_at: string | null
+}
+
+export interface LoginStartResponse {
+  session: BrowserSession
+  novnc_url: string
+  instructions: string
+}
+
+export interface LoginCompleteResponse {
+  status: 'ok' | 'retry'
+  message: string
+}
+
+export interface GridCheckResult {
+  grid_id: number
+  name: string
+  hub_url: string
+  status: GridStatus
+  nodes: number
+  ready: boolean
+}

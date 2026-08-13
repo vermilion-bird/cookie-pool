@@ -1,0 +1,13 @@
+data/
+__pycache__/
+*.pyc
+.env
+*.egg-info/
+dist/
+node_modules/
+.vite/
+.venv/
+venv/
+
+# Build artifacts
+*.tsbuildinfo

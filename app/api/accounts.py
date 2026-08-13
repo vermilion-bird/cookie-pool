@@ -1,0 +1,218 @@
+import logging
+from datetime import datetime, timezone
+
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
+from sqlalchemy.orm import Session
+
+from database import get_db
+from models import Account, BrowserSession, GridInstance
+from services.account_service import AccountService
+from services.grid_service import GridService
+from services.browser_service import BrowserService
+from config import HOST_ADDRESS, NOVNC_PORT
+
+logger = logging.getLogger(__name__)
+router = APIRouter()
+grid_service = GridService()
+
+
+class AccountCreate(BaseModel):
+    name: str
+    platform: str
+    notes: str = ""
+    grid_id: int | None = None
+
+
+class AccountUpdate(BaseModel):
+    name: str = None
+    platform: str = None
+    notes: str = None
+    grid_id: int | None = None
+
+
+def _resolve_novnc_url(account: Account) -> str:
+    """根据账号绑定的 Grid 确定 noVNC URL。
+    优先使用 grid.novnc_base_url，否则回退到全局 NOVNC_PUBLIC_URL。"""
+    if account.grid_id:
+        grid = account.grid
+        if grid and grid.novnc_base_url:
+            return grid.novnc_base_url
+    return f"http://{HOST_ADDRESS}:{NOVNC_PORT}/vnc.html"
+
+
+def _resolve_grid_url(account: Account) -> str:
+    """根据账号绑定的 Grid 确定 hub URL。"""
+    if account.grid_id and account.grid:
+        return account.grid.hub_url
+    from config import GRID_URL
+    return GRID_URL
+
+
+@router.get("")
+def list_accounts(db: Session = Depends(get_db)):
+    accounts = AccountService.get_all(db)
+    return {"accounts": [a.to_dict(include_grid=True) for a in accounts]}
+
+
+@router.post("")
+def create_account(data: AccountCreate, db: Session = Depends(get_db)):
+    existing = db.query(Account).filter(Account.name == data.name).first()
+    if existing:
+        raise HTTPException(status_code=400, detail=f"Account '{data.name}' already exists")
+
+    # 验证 grid_id 存在（如果指定了）
+    if data.grid_id is not None:
+        grid = db.query(GridInstance).filter(GridInstance.id == data.grid_id).first()
+        if not grid:
+            raise HTTPException(status_code=400, detail=f"Grid {data.grid_id} not found")
+
+    account = AccountService.create(db, name=data.name, platform=data.platform,
+                                     notes=data.notes, grid_id=data.grid_id)
+    return {"account": account.to_dict(include_grid=True)}
+
+
+@router.get("/{account_id}")
+def get_account(account_id: int, db: Session = Depends(get_db)):
+    account = AccountService.get_by_id(db, account_id)
+    if not account:
+        raise HTTPException(status_code=404, detail="Account not found")
+    return {"account": account.to_dict(include_grid=True)}
+
+
+@router.put("/{account_id}")
+def update_account(account_id: int, data: AccountUpdate, db: Session = Depends(get_db)):
+    """更新账号字段，包括 grid_id（关联到不同 Grid 实例）。"""
+    account = AccountService.get_by_id(db, account_id)
+    if not account:
+        raise HTTPException(status_code=404, detail="Account not found")
+
+    kwargs = {}
+    if data.name is not None:
+        existing = db.query(Account).filter(
+            Account.name == data.name, Account.id != account_id
+        ).first()
+        if existing:
+            raise HTTPException(status_code=400, detail=f"Account name '{data.name}' already exists")
+        kwargs["name"] = data.name
+    if data.notes is not None:
+        kwargs["notes"] = data.notes
+    if data.grid_id is not None:
+        grid = db.query(GridInstance).filter(GridInstance.id == data.grid_id).first()
+        if not grid:
+            raise HTTPException(status_code=400, detail=f"Grid {data.grid_id} not found")
+        kwargs["grid_id"] = data.grid_id
+    if data.grid_id is None and "grid_id" not in kwargs:
+        # explicit set to None allowed
+        kwargs["grid_id"] = None
+
+    updated = AccountService.update(db, account_id, **kwargs)
+    return {"account": updated.to_dict(include_grid=True)}
+
+
+@router.delete("/{account_id}")
+def delete_account(account_id: int, db: Session = Depends(get_db)):
+    ok = AccountService.delete(db, account_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Account not found")
+    return {"status": "deleted"}
+
+
+# ── Login Flow ──
+
+@router.post("/{account_id}/login")
+def start_login(account_id: int, db: Session = Depends(get_db)):
+    account = AccountService.get_by_id(db, account_id)
+    if not account:
+        raise HTTPException(status_code=404, detail="Account not found")
+    if account.status == "IN_USE":
+        raise HTTPException(status_code=409, detail="Account is in use")
+
+    # Close stale login sessions
+    old_sessions = db.query(BrowserSession).filter(
+        BrowserSession.account_id == account_id,
+        BrowserSession.status.in_(["CREATING", "READY", "LOGIN"]),
+    ).all()
+    for s in old_sessions:
+        s.status = "CLOSED"
+        s.closed_at = datetime.now(timezone.utc)
+    db.commit()
+
+    session = BrowserSession(account_id=account_id, status="CREATING")
+    db.add(session)
+    db.commit()
+    db.refresh(session)
+
+    try:
+        grid_url = _resolve_grid_url(account)
+        browser = BrowserService(account, grid_service)
+        browser.create_session(grid_url=grid_url)
+
+        session.grid_session_id = browser.driver.session_id
+        session.status = "READY"
+        session.novnc_url = _resolve_novnc_url(account)
+        session.status = "LOGIN"
+        db.commit()
+        logger.info(f"Login session {session.id} created for account {account_id} (grid_url={grid_url})")
+    except Exception as e:
+        session.status = "FAILED"
+        session.closed_at = datetime.now(timezone.utc)
+        db.commit()
+        logger.error(f"Login session creation failed for account {account_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to create browser: {e}")
+
+    return {
+        "session": session.to_dict(),
+        "novnc_url": session.novnc_url,
+        "instructions": "Open the noVNC URL, log in to the target platform, then click 'Complete'.",
+    }
+
+
+@router.post("/{account_id}/login/complete")
+def complete_login(account_id: int, db: Session = Depends(get_db)):
+    account = AccountService.get_by_id(db, account_id)
+    if not account:
+        raise HTTPException(status_code=404, detail="Account not found")
+
+    session = db.query(BrowserSession).filter(
+        BrowserSession.account_id == account_id,
+        BrowserSession.status == "LOGIN",
+    ).order_by(BrowserSession.id.desc()).first()
+
+    if not session:
+        raise HTTPException(status_code=400, detail="No active login session found")
+
+    try:
+        grid_url = _resolve_grid_url(account)
+        browser = BrowserService(account, grid_service)
+        browser.driver = grid_service.create_driver(account.profile_path, grid_url=grid_url)
+        is_logged_in = browser.check_login()
+        browser.close_session()
+    except Exception as e:
+        logger.error(f"Login check failed: {e}")
+        is_logged_in = False
+
+    if is_logged_in:
+        AccountService.mark_logged_in(db, account)
+        session.status = "COMPLETED"
+        session.closed_at = datetime.now(timezone.utc)
+        db.commit()
+        return {"status": "ok", "message": "Login confirmed, account is now ACTIVE"}
+    else:
+        return {"status": "retry", "message": "Not logged in yet. Please complete login in the browser."}
+
+
+@router.post("/{account_id}/login/cancel")
+def cancel_login(account_id: int, db: Session = Depends(get_db)):
+    session = db.query(BrowserSession).filter(
+        BrowserSession.account_id == account_id,
+        BrowserSession.status.in_(["CREATING", "READY", "LOGIN"]),
+    ).order_by(BrowserSession.id.desc()).first()
+
+    if not session:
+        raise HTTPException(status_code=400, detail="No active login session")
+
+    session.status = "CLOSED"
+    session.closed_at = datetime.now(timezone.utc)
+    db.commit()
+    return {"status": "cancelled"}
