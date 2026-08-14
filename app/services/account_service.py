@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 
 from models import Account, GridInstance
+from services.grid_service import GridService
 from config import PROFILES_DIR
 
 logger = logging.getLogger(__name__)
@@ -24,7 +25,7 @@ class AccountService:
 
     @staticmethod
     def create(db: Session, name: str, platform: str, notes: str = "",
-               grid_id: int = None) -> Account:
+               grid_id: int = None, login_indicator: str = None) -> Account:
         profile_name = f"account_{name.strip().lower().replace(' ', '_')}"
         profile_path = os.path.join(PROFILES_DIR, profile_name)
 
@@ -35,6 +36,7 @@ class AccountService:
             status="WAIT_LOGIN",
             notes=notes,
             grid_id=grid_id,
+            login_indicator=login_indicator,
         )
         db.add(account)
         db.commit()
@@ -44,11 +46,11 @@ class AccountService:
 
     @staticmethod
     def update(db: Session, account_id: int, **kwargs) -> Account | None:
-        """Update account fields. Accepted: name, platform, notes, grid_id."""
+        """Update account fields. Accepted: name, platform, notes, grid_id, login_indicator."""
         account = AccountService.get_by_id(db, account_id)
         if not account:
             return None
-        for key in ("name", "platform", "notes", "grid_id"):
+        for key in ("name", "platform", "notes", "grid_id", "login_indicator"):
             if key in kwargs:
                 setattr(account, key, kwargs[key])
         account.updated_at = datetime.now(timezone.utc)
@@ -62,9 +64,26 @@ class AccountService:
         account = AccountService.get_by_id(db, account_id)
         if not account:
             return False
+        profile_path = account.profile_path
+
+        # 先关闭该账号未结束的 Grid 会话，释放 Profile 占用
+        for s in account.sessions:
+            if s.status in ("CREATING", "READY", "LOGIN", "RUNNING") and s.grid_session_id:
+                if account.grid:
+                    GridService.delete_session(account.grid.hub_url, s.grid_session_id)
+
         db.delete(account)
         db.commit()
         logger.info(f"Deleted account {account_id}")
+
+        # 清理磁盘上的 Profile（级联删除会话/任务后）
+        if profile_path and os.path.isdir(profile_path):
+            try:
+                import shutil
+                shutil.rmtree(profile_path, ignore_errors=True)
+                logger.info(f"Removed profile directory: {profile_path}")
+            except Exception as e:
+                logger.warning(f"Failed to remove profile directory {profile_path}: {e}")
         return True
 
     @staticmethod

@@ -16,12 +16,15 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 grid_service = GridService()
 
+LOGIN_KEYWORDS = ["login", "signin", "auth", "sign_in", "log_in"]
+
 
 class AccountCreate(BaseModel):
     name: str
     platform: str
     notes: str = ""
     grid_id: int | None = None
+    login_indicator: str | None = None
 
 
 class AccountUpdate(BaseModel):
@@ -29,6 +32,7 @@ class AccountUpdate(BaseModel):
     platform: str = None
     notes: str = None
     grid_id: int | None = None
+    login_indicator: str | None = None
 
 
 def _resolve_novnc_url(account: Account) -> str:
@@ -68,7 +72,8 @@ def create_account(data: AccountCreate, db: Session = Depends(get_db)):
             raise HTTPException(status_code=400, detail=f"Grid {data.grid_id} not found")
 
     account = AccountService.create(db, name=data.name, platform=data.platform,
-                                     notes=data.notes, grid_id=data.grid_id)
+                                     notes=data.notes, grid_id=data.grid_id,
+                                     login_indicator=data.login_indicator)
     return {"account": account.to_dict(include_grid=True)}
 
 
@@ -82,7 +87,7 @@ def get_account(account_id: int, db: Session = Depends(get_db)):
 
 @router.put("/{account_id}")
 def update_account(account_id: int, data: AccountUpdate, db: Session = Depends(get_db)):
-    """更新账号字段，包括 grid_id（关联到不同 Grid 实例）。"""
+    """更新账号字段，包括 grid_id（关联到不同 Grid 实例）与 login_indicator。"""
     account = AccountService.get_by_id(db, account_id)
     if not account:
         raise HTTPException(status_code=404, detail="Account not found")
@@ -95,6 +100,8 @@ def update_account(account_id: int, data: AccountUpdate, db: Session = Depends(g
         if existing:
             raise HTTPException(status_code=400, detail=f"Account name '{data.name}' already exists")
         kwargs["name"] = data.name
+    if data.platform is not None:
+        kwargs["platform"] = data.platform
     if data.notes is not None:
         kwargs["notes"] = data.notes
     if data.grid_id is not None:
@@ -105,6 +112,10 @@ def update_account(account_id: int, data: AccountUpdate, db: Session = Depends(g
     if data.grid_id is None and "grid_id" not in kwargs:
         # explicit set to None allowed
         kwargs["grid_id"] = None
+    if data.login_indicator is not None:
+        kwargs["login_indicator"] = data.login_indicator
+    if data.login_indicator is None and "login_indicator" not in kwargs:
+        kwargs["login_indicator"] = None
 
     updated = AccountService.update(db, account_id, **kwargs)
     return {"account": updated.to_dict(include_grid=True)}
@@ -170,6 +181,7 @@ def start_login(account_id: int, db: Session = Depends(get_db)):
 
 @router.post("/{account_id}/login/complete")
 def complete_login(account_id: int, db: Session = Depends(get_db)):
+    """校验登录：不新建 driver，直接经 Grid REST 检查现有登录会话（避免 Profile 锁竞争）。"""
     account = AccountService.get_by_id(db, account_id)
     if not account:
         raise HTTPException(status_code=404, detail="Account not found")
@@ -182,17 +194,31 @@ def complete_login(account_id: int, db: Session = Depends(get_db)):
     if not session:
         raise HTTPException(status_code=400, detail="No active login session found")
 
-    try:
+    is_logged_in = False
+    if session.grid_session_id:
         grid_url = _resolve_grid_url(account)
-        browser = BrowserService(account, grid_service)
-        browser.driver = grid_service.create_driver(account.profile_path, grid_url=grid_url)
-        is_logged_in = browser.check_login()
-        browser.close_session()
-    except Exception as e:
-        logger.error(f"Login check failed: {e}")
-        is_logged_in = False
+        indicator = (account.login_indicator or "").strip()
+        checked = False
+        if indicator:
+            found = GridService.session_has_selector(grid_url, session.grid_session_id, indicator)
+            if found is not None:
+                is_logged_in = found
+                checked = True
+            else:
+                logger.warning(f"Selector check failed for account {account_id}; falling back to URL heuristic")
+        if not checked:
+            current_url = GridService.session_url(grid_url, session.grid_session_id)
+            if current_url is None:
+                logger.error(f"Cannot reach login session {session.grid_session_id} for account {account_id}")
+                return {"status": "retry",
+                        "message": "Cannot reach the login browser session. Please keep the browser open and try again."}
+            lowered = current_url.lower()
+            is_logged_in = not any(kw in lowered for kw in LOGIN_KEYWORDS)
 
     if is_logged_in:
+        # 校验通过：关闭 Grid 会话释放资源，账号标记 ACTIVE
+        if session.grid_session_id:
+            GridService.delete_session(_resolve_grid_url(account), session.grid_session_id)
         AccountService.mark_logged_in(db, account)
         session.status = "COMPLETED"
         session.closed_at = datetime.now(timezone.utc)

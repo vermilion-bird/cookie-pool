@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from models import Task
 from services.account_service import AccountService
+from executors.registry import get_executor, ExecutorError, resolve_grid_url
 
 logger = logging.getLogger(__name__)
 
@@ -36,9 +37,20 @@ class TaskService:
         return task
 
     @staticmethod
-    def run(db: Session, task: Task, executor) -> Task:
-        """执行任务。executor 是接收 (driver, task) 的可调用对象。"""
+    def run(db: Session, task: Task, executor_cls=None) -> Task:
+        """执行任务。executor_cls 为按 task.type 注册的执行器类（worker 传入）。
+        若为 None 则按 task.type 从注册表查找。"""
         if task.status != "PENDING":
+            return task
+
+        try:
+            executor_cls = executor_cls or get_executor(task.type)
+        except ExecutorError as e:
+            task.status = "FAILED"
+            task.error = str(e)
+            task.completed_at = datetime.now(timezone.utc)
+            db.commit()
+            logger.warning(f"Task {task.id} failed: {e}")
             return task
 
         account = AccountService.acquire_lock(db, task.account_id)
@@ -54,8 +66,11 @@ class TaskService:
         task.started_at = datetime.now(timezone.utc)
         db.commit()
 
-        browser = executor.setup_browser(account)
+        executor = executor_cls(account)
+        browser = None
         try:
+            grid_url = resolve_grid_url(account)
+            browser = executor.setup_browser(account, grid_url=grid_url)
             result = executor.execute(db, browser, task)
             task.status = "COMPLETED"
             task.result = json.dumps(result, ensure_ascii=False) if result else "{}"
@@ -67,7 +82,11 @@ class TaskService:
             task.completed_at = datetime.now(timezone.utc)
             logger.error(f"Task {task.id} failed: {e}")
         finally:
-            executor.teardown_browser(browser)
+            try:
+                if browser is not None:
+                    executor.teardown_browser(browser)
+            except Exception:
+                logger.exception(f"Teardown error for task {task.id}")
             AccountService.release_lock(db, task.account_id)
             db.commit()
 

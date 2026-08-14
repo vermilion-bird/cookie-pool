@@ -1,6 +1,8 @@
 # Cookie Pool — Selenium Grid + noVNC 人工登录账号池
 
 > 无桌面服务器上的账号管理与自动化执行平台。
+>
+> **当前版本：v0.3.0** — 详见 [ROADMAP.md](./ROADMAP.md)（Phase 1：API 认证、异步任务执行、会话超时回收、测试体系）。
 
 ## 架构
 
@@ -24,6 +26,8 @@ docker compose up -d --build
 访问 `http://localhost:8080/` 打开 Web Admin（FastAPI 直接托管编译好的 React 产物）。
 
 ### 本地开发（前端热更新）
+
+> **API 认证**：v0.3.0 起所有 `/api/*` 请求需携带 `X-API-Key` 头（默认 `dev-key`，仅限本地；生产通过 `API_KEY` 环境变量注入强密钥）。前端右上角 🔑 按钮可设置密钥（存于 localStorage）。
 
 ```bash
 # 后端（需要本机已跑起 Selenium Grid，或指向远程 Grid）
@@ -68,21 +72,38 @@ WAIT_LOGIN → ACTIVE ↔ IN_USE
                  ↘ LOGIN_EXPIRED → ACTIVE
 ```
 
+账号可配置 **login_indicator**（CSS 选择器）：登录校验时优先用它在浏览器中判断是否已登录，未配置则回退到 URL 关键词启发式。
+
 ## API
+
+> 所有 `/api/*` 请求需携带 `X-API-Key` 头（`/health` 与 SPA 静态资源除外）。
 
 | 分组 | 端点 | 说明 |
 |------|------|------|
-| 账号 | `GET/POST /api/accounts` | 列表/创建 |
-| 账号 | `GET/DELETE /api/accounts/{id}` | 详情/删除 |
+| 账号 | `GET/POST /api/accounts` | 列表/创建（支持 `login_indicator`） |
+| 账号 | `GET/PUT/DELETE /api/accounts/{id}` | 详情/编辑/删除（删除时清理 Profile 磁盘） |
 | 登录 | `POST /api/accounts/{id}/login` | 打开登录浏览器 |
-| 登录 | `POST /api/accounts/{id}/login/complete` | 确认登录完成 |
+| 登录 | `POST /api/accounts/{id}/login/complete` | 确认登录（经 Grid REST 校验现有会话） |
 | 登录 | `POST /api/accounts/{id}/login/cancel` | 取消登录 |
 | Session | `GET/DELETE /api/sessions/{id}` | 会话管理 |
-| 任务 | `POST /api/tasks` | 创建任务 |
+| 任务 | `POST /api/tasks` | 创建任务（校验执行器类型与 JSON 参数） |
 | 任务 | `GET /api/tasks` | 任务列表 |
 | 任务 | `GET /api/tasks/{id}` | 任务详情 |
-| 任务 | `POST /api/tasks/{id}/run` | 触发执行 |
+| 任务 | `POST /api/tasks/{id}/run` | 入队后台执行（立即返回，异步运行） |
 | 任务 | `POST /api/tasks/{id}/cancel` | 取消任务 |
+| Grid | `GET/POST /api/grids`、`/{id}/check` 等 | Grid 管理（原样） |
+
+内置任务执行器（`app/executors/registry.py`）：`visit_url`、`check_login_status`。自定义执行器通过注册表扩展。
+
+## 测试
+
+```bash
+# 后端（pytest）
+cd app && pip install -r requirements-dev.txt && python -m pytest tests -q
+
+# 前端（vitest）
+cd frontend-react && npm test
+```
 
 ## 前端页面
 

@@ -62,6 +62,60 @@ class GridService:
             logger.warning(f"Error closing Grid session: {e}")
 
     @staticmethod
+    def session_url(grid_url: str, session_id: str) -> str | None:
+        """经 Grid REST 获取现有 session 的当前 URL（不新建 driver，避免 Profile 锁竞争）。"""
+        import urllib.request
+        import json
+        if not session_id:
+            return None
+        try:
+            req = urllib.request.Request(f"{grid_url}/wd/hub/session/{session_id}/url")
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                data = json.loads(resp.read().decode())
+                return data.get("value")
+        except Exception as e:
+            logger.warning(f"Failed to get session URL {session_id}: {e}")
+            return None
+
+    @staticmethod
+    def session_has_selector(grid_url: str, session_id: str, css_selector: str) -> bool | None:
+        """经 Grid REST 在现有 session 中执行 JS 判断选择器是否存在；失败返回 None。"""
+        import urllib.request
+        import json
+        if not session_id or not css_selector:
+            return None
+        try:
+            body = json.dumps({
+                "script": "return !!document.querySelector(arguments[0]);",
+                "args": [css_selector],
+            }).encode()
+            req = urllib.request.Request(
+                f"{grid_url}/wd/hub/session/{session_id}/execute/sync",
+                data=body,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                data = json.loads(resp.read().decode())
+                return bool(data.get("value"))
+        except Exception as e:
+            logger.warning(f"Failed to execute selector check on session {session_id}: {e}")
+            return None
+
+    @staticmethod
+    def delete_session(grid_url: str, session_id: str) -> None:
+        """经 Grid REST 关闭现有 session（释放 Profile 与节点资源）。"""
+        import urllib.request
+        if not session_id:
+            return
+        try:
+            req = urllib.request.Request(f"{grid_url}/wd/hub/session/{session_id}", method="DELETE")
+            urllib.request.urlopen(req, timeout=10)
+            logger.info(f"Grid session deleted via REST: {session_id}")
+        except Exception as e:
+            logger.warning(f"Failed to delete grid session {session_id}: {e}")
+
+    @staticmethod
     def get_session_info(driver: WebDriver) -> dict:
         """获取 session 的节点信息（用于提取 noVNC 等）。"""
         try:

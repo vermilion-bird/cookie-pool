@@ -38,6 +38,7 @@ export interface Account {
   profile_path: string
   status: AccountStatus
   notes: string
+  login_indicator: string | null
   grid_id: number | null
   grid?: GridInstance
   last_login_at: string | null

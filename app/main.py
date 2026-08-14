@@ -2,14 +2,17 @@ import logging
 import os
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
+from sqlalchemy import text
 
 from contextlib import asynccontextmanager
 
-from database import init_db
-from config import PROFILES_DIR, LOG_LEVEL
+from database import init_db, SessionLocal
+from config import PROFILES_DIR, LOG_LEVEL, API_KEY
+from version import __version__
+from worker import worker, sweeper
 
 logging.basicConfig(level=getattr(logging, LOG_LEVEL.upper(), logging.INFO),
                     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
@@ -20,17 +23,37 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     init_db()
     os.makedirs(PROFILES_DIR, exist_ok=True)
-    logger.info("Cookie Pool started")
+    # 测试环境通过 CP_DISABLE_BACKGROUND=1 关闭后台线程
+    if os.getenv("CP_DISABLE_BACKGROUND", "0") != "1":
+        worker.start()
+        sweeper.start()
+    logger.info("Cookie Pool started (version %s)", app.version)
     yield
+    sweeper.stop()
+    worker.stop()
     logger.info("Cookie Pool stopped")
 
 
 app = FastAPI(
     title="Cookie Pool",
     description="Selenium Grid + noVNC 人工登录账号池",
-    version="0.2.0",
+    version=__version__,
     lifespan=lifespan,
 )
+
+# ── API 认证中间件：/api/* 与文档端点需 X-API-Key 头；/health 与 SPA 静态资源放行 ──
+AUTH_PROTECTED_DOCS = {"/docs", "/redoc", "/openapi.json"}
+
+
+@app.middleware("http")
+async def api_key_middleware(request: Request, call_next):
+    path = request.url.path
+    if path.startswith("/api") or path in AUTH_PROTECTED_DOCS:
+        key = request.headers.get("X-API-Key")
+        if not key or key != API_KEY:
+            return JSONResponse(status_code=401, content={"detail": "Invalid or missing API key"})
+    return await call_next(request)
+
 
 # 导入 API 路由
 from api.accounts import router as accounts_router
@@ -46,7 +69,18 @@ app.include_router(grids_router, prefix="/api/grids", tags=["grids"])
 
 @app.get("/health")
 async def health():
-    return {"status": "ok"}
+    db_ok = True
+    try:
+        with SessionLocal() as db:
+            db.execute(text("SELECT 1"))
+    except Exception as e:
+        logger.warning("Health check: database error: %s", e)
+        db_ok = False
+    return {
+        "status": "ok" if db_ok else "degraded",
+        "version": app.version,
+        "database": "ok" if db_ok else "error",
+    }
 
 
 # --- React SPA (built by frontend-react, copied to FRONTEND_DIR at image build time) ---

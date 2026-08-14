@@ -1,6 +1,8 @@
+import { useState } from 'react'
 import { NavLink, Outlet } from 'react-router-dom'
 import clsx from 'clsx'
 import { useHealth } from '@/hooks/useHealth'
+import { SetApiKeyModal } from '@/components/SetApiKeyModal'
 
 const navItems = [
   { to: '/', label: 'Dashboard', icon: '◉' },
@@ -11,6 +13,7 @@ const navItems = [
 
 export function Layout() {
   const { isError } = useHealth()
+  const [showKeyModal, setShowKeyModal] = useState(false)
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -45,6 +48,13 @@ export function Layout() {
                 {item.label}
               </NavLink>
             ))}
+            <button
+              onClick={() => setShowKeyModal(true)}
+              className="ml-1 flex h-8 w-8 items-center justify-center rounded-lg text-sm text-ink-soft/50 transition-colors hover:bg-gray-100 hover:text-ink"
+              title="Set API key"
+            >
+              🔑
+            </button>
           </nav>
         </div>
       </header>
@@ -53,6 +63,8 @@ export function Layout() {
       <main className="mx-auto max-w-6xl px-5 py-7">
         <Outlet />
       </main>
+
+      {showKeyModal && <SetApiKeyModal onClose={() => setShowKeyModal(false)} />}
     </div>
   )
 }

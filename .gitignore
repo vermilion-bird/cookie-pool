@@ -8,6 +8,7 @@ node_modules/
 .vite/
 .venv/
 venv/
+.npm-cache/
 
 # Build artifacts
 *.tsbuildinfo

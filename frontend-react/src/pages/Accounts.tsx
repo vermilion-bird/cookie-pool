@@ -5,6 +5,7 @@ import { Card, CardSection, CardHeader } from '@/components/Card'
 import { Button } from '@/components/Button'
 import { Badge } from '@/components/Badge'
 import { FilterBar } from '@/components/FilterBar'
+import { Modal } from '@/components/Modal'
 import { EmptyState, SkeletonCard } from '@/components/EmptyState'
 import { LoginModal } from '@/components/LoginModal'
 import { useToast } from '@/hooks/useToast'
@@ -38,14 +39,16 @@ function getIcon(platform: string, name: string): string {
   return '🔑'
 }
 
+const emptyForm = { name: '', platform: '', notes: '', gridId: '' as number | string, loginIndicator: '' }
+
 export function Accounts() {
   const toast = useToast()
   const queryClient = useQueryClient()
   const [filter, setFilter] = useState<FilterValue>('ALL')
-  const [name, setName] = useState('')
-  const [platform, setPlatform] = useState('')
-  const [selectedGridId, setSelectedGridId] = useState<number | string>('')
+  const [form, setForm] = useState(emptyForm)
   const [showCreate, setShowCreate] = useState(false)
+  const [editAccount, setEditAccount] = useState<Account | null>(null)
+  const [editForm, setEditForm] = useState(emptyForm)
   const [loginAccountId, setLoginAccountId] = useState<number | null>(null)
 
   const { data, isLoading } = useQuery({
@@ -66,20 +69,39 @@ export function Accounts() {
     [accounts, filter],
   )
 
+  const invalidateAccounts = () => queryClient.invalidateQueries({ queryKey: ['accounts'] })
+
   const createMutation = useMutation({
     mutationFn: () =>
       api.accounts.create({
-        name: name.trim(),
-        platform: platform.trim(),
-        grid_id: selectedGridId ? parseInt(selectedGridId as string, 10) : null,
+        name: form.name.trim(),
+        platform: form.platform.trim(),
+        notes: form.notes.trim(),
+        grid_id: form.gridId ? parseInt(form.gridId as string, 10) : null,
+        login_indicator: form.loginIndicator.trim() || null,
       }),
     onSuccess: () => {
-      toast(`Created "${name}"`, 'success')
-      setName('')
-      setPlatform('')
-      setSelectedGridId('')
+      toast(`Created "${form.name.trim()}"`, 'success')
+      setForm(emptyForm)
       setShowCreate(false)
-      queryClient.invalidateQueries({ queryKey: ['accounts'] })
+      invalidateAccounts()
+    },
+    onError: (e: Error) => toast('Failed: ' + e.message, 'error'),
+  })
+
+  const updateMutation = useMutation({
+    mutationFn: () =>
+      api.accounts.update(editAccount!.id, {
+        name: editForm.name.trim(),
+        platform: editForm.platform.trim(),
+        notes: editForm.notes.trim(),
+        grid_id: editForm.gridId ? parseInt(editForm.gridId as string, 10) : null,
+        login_indicator: editForm.loginIndicator.trim() || null,
+      }),
+    onSuccess: () => {
+      toast('Account updated', 'success')
+      setEditAccount(null)
+      invalidateAccounts()
     },
     onError: (e: Error) => toast('Failed: ' + e.message, 'error'),
   })
@@ -89,13 +111,13 @@ export function Accounts() {
     onSuccess: (_, id) => {
       const acc = accounts.find(a => a.id === id)
       toast(`Deleted "${acc?.name ?? id}"`, 'success')
-      queryClient.invalidateQueries({ queryKey: ['accounts'] })
+      invalidateAccounts()
     },
     onError: (e: Error) => toast('Failed: ' + e.message, 'error'),
   })
 
   function handleCreate() {
-    if (!name.trim() || !platform.trim()) {
+    if (!form.name.trim() || !form.platform.trim()) {
       toast('Name and platform are required', 'error')
       return
     }
@@ -105,6 +127,25 @@ export function Accounts() {
   function handleDelete(acc: Account) {
     if (!confirm(`Delete "${acc.name}"? This cannot be undone.`)) return
     deleteMutation.mutate(acc.id)
+  }
+
+  function openEdit(acc: Account) {
+    setEditForm({
+      name: acc.name,
+      platform: acc.platform,
+      notes: acc.notes || '',
+      gridId: acc.grid_id ?? '',
+      loginIndicator: acc.login_indicator || '',
+    })
+    setEditAccount(acc)
+  }
+
+  function handleSaveEdit() {
+    if (!editForm.name.trim() || !editForm.platform.trim()) {
+      toast('Name and platform are required', 'error')
+      return
+    }
+    updateMutation.mutate()
   }
 
   function gridName(acc: Account): string {
@@ -137,8 +178,8 @@ export function Accounts() {
                 <input
                   className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm placeholder:text-gray-300"
                   placeholder="google_ads_01"
-                  value={name}
-                  onChange={e => setName(e.target.value)}
+                  value={form.name}
+                  onChange={e => setForm({ ...form, name: e.target.value })}
                   onKeyDown={e => e.key === 'Enter' && handleCreate()}
                 />
               </div>
@@ -147,8 +188,8 @@ export function Accounts() {
                 <input
                   className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm placeholder:text-gray-300"
                   placeholder="ads.google.com"
-                  value={platform}
-                  onChange={e => setPlatform(e.target.value)}
+                  value={form.platform}
+                  onChange={e => setForm({ ...form, platform: e.target.value })}
                   onKeyDown={e => e.key === 'Enter' && handleCreate()}
                 />
               </div>
@@ -156,14 +197,23 @@ export function Accounts() {
                 <label className="mb-1 block text-xs font-semibold text-ink-soft/50 uppercase tracking-wider">Grid</label>
                 <select
                   className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm"
-                  value={selectedGridId}
-                  onChange={e => setSelectedGridId(e.target.value)}
+                  value={form.gridId}
+                  onChange={e => setForm({ ...form, gridId: e.target.value })}
                 >
                   <option value="">Default</option>
                   {grids.map(g => (
                     <option key={g.id} value={g.id}>{g.name}</option>
                   ))}
                 </select>
+              </div>
+              <div className="min-w-[150px] flex-1">
+                <label className="mb-1 block text-xs font-semibold text-ink-soft/50 uppercase tracking-wider">Login Indicator <span className="text-ink-soft/30">(optional)</span></label>
+                <input
+                  className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm font-mono placeholder:text-gray-300"
+                  placeholder=".user-avatar"
+                  value={form.loginIndicator}
+                  onChange={e => setForm({ ...form, loginIndicator: e.target.value })}
+                />
               </div>
               <Button variant="success" loading={createMutation.isPending} onClick={handleCreate}>
                 Create Account
@@ -194,12 +244,64 @@ export function Accounts() {
                 icon={getIcon(acc.platform, acc.name)}
                 gridName={gridName(acc)}
                 onLogin={() => setLoginAccountId(acc.id)}
+                onEdit={() => openEdit(acc)}
                 onDelete={() => handleDelete(acc)}
               />
             ))}
           </div>
         )}
       </Card>
+
+      {/* Edit Account modal */}
+      {editAccount && (
+        <Modal
+          open
+          title={`Edit Account #${editAccount.id}`}
+          onClose={() => setEditAccount(null)}
+          footer={
+            <>
+              <Button variant="primary" loading={updateMutation.isPending} onClick={handleSaveEdit}>Save</Button>
+              <Button variant="outline" onClick={() => setEditAccount(null)}>Cancel</Button>
+            </>
+          }
+        >
+          <div className="space-y-4">
+            <div>
+              <label className="mb-1.5 block text-xs font-semibold text-ink-soft/50 uppercase tracking-wider">Account Name</label>
+              <input className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm" value={editForm.name}
+                onChange={e => setEditForm({ ...editForm, name: e.target.value })} />
+            </div>
+            <div>
+              <label className="mb-1.5 block text-xs font-semibold text-ink-soft/50 uppercase tracking-wider">Platform</label>
+              <input className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm" value={editForm.platform}
+                onChange={e => setEditForm({ ...editForm, platform: e.target.value })} />
+            </div>
+            <div>
+              <label className="mb-1.5 block text-xs font-semibold text-ink-soft/50 uppercase tracking-wider">Notes</label>
+              <input className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm" value={editForm.notes}
+                onChange={e => setEditForm({ ...editForm, notes: e.target.value })} />
+            </div>
+            <div>
+              <label className="mb-1.5 block text-xs font-semibold text-ink-soft/50 uppercase tracking-wider">Grid</label>
+              <select className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm" value={editForm.gridId}
+                onChange={e => setEditForm({ ...editForm, gridId: e.target.value })}>
+                <option value="">Default</option>
+                {grids.map(g => (
+                  <option key={g.id} value={g.id}>{g.name}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="mb-1.5 block text-xs font-semibold text-ink-soft/50 uppercase tracking-wider">
+                Login Indicator <span className="text-ink-soft/30">(CSS selector for login verification, optional)</span>
+              </label>
+              <input className="w-full rounded-lg border border-gray-200 px-3 py-2 font-mono text-sm" placeholder=".user-avatar"
+                value={editForm.loginIndicator}
+                onChange={e => setEditForm({ ...editForm, loginIndicator: e.target.value })} />
+            </div>
+          </div>
+        </Modal>
+      )}
 
       {/* Login modal */}
       {loginAccountId !== null && (
@@ -214,12 +316,14 @@ function AccountItem({
   icon,
   gridName,
   onLogin,
+  onEdit,
   onDelete,
 }: {
   account: Account
   icon: string
   gridName: string
   onLogin: () => void
+  onEdit: () => void
   onDelete: () => void
 }) {
   const last = account.last_login_at || account.last_used_at
@@ -253,6 +357,9 @@ function AccountItem({
       <div className="flex items-center gap-1.5">
         <Button variant="success" size="sm" disabled={!isLoginable} onClick={onLogin}>
           Login
+        </Button>
+        <Button variant="ghost" size="sm" onClick={onEdit}>
+          Edit
         </Button>
         <button
           onClick={onDelete}

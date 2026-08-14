@@ -45,6 +45,8 @@ class Account(Base):
     profile_path = Column(String(512), nullable=False)
     status = Column(String(32), nullable=False, default="WAIT_LOGIN")
     notes = Column(Text, default="")
+    login_indicator = Column(String(512), nullable=True,
+                             comment="Optional CSS selector used to verify login state")
 
     grid_id = Column(Integer, ForeignKey("grid_instances.id"), nullable=True)
 
@@ -67,6 +69,7 @@ class Account(Base):
             "profile_path": self.profile_path,
             "status": self.status,
             "notes": self.notes,
+            "login_indicator": self.login_indicator,
             "grid_id": self.grid_id,
             "last_login_at": self.last_login_at.isoformat() if self.last_login_at else None,
             "last_check_at": self.last_check_at.isoformat() if self.last_check_at else None,

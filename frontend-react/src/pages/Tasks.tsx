@@ -21,6 +21,8 @@ const filterOptions: { label: string; value: FilterValue }[] = [
   { label: 'Failed', value: 'FAILED' },
 ]
 
+const KNOWN_TYPES = ['visit_url', 'check_login_status']
+
 export function Tasks() {
   const toast = useToast()
   const queryClient = useQueryClient()
@@ -56,8 +58,8 @@ export function Tasks() {
 
   const runMutation = useMutation({
     mutationFn: (id: number) => api.tasks.run(id),
-    onMutate: id => toast(`Running task #${id}...`, 'info'),
-    onSuccess: (_, id) => { toast(`Task #${id} completed`, 'success'); invalidate() },
+    onMutate: id => toast(`Task #${id} queued for background execution...`, 'info'),
+    onSuccess: (_, id) => { toast(`Task #${id} queued`, 'success'); invalidate() },
     onError: (e: Error, id) => { toast(`Task #${id} failed: ` + e.message, 'error'); invalidate() },
   })
 
@@ -104,7 +106,8 @@ export function Tasks() {
               </div>
               <div className="min-w-[150px] flex-1">
                 <label className="mb-1 block text-xs font-semibold text-ink-soft/50 uppercase tracking-wider">Task Type</label>
-                <input className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm placeholder:text-gray-300" placeholder="check_balance" value={taskType} onChange={e => setTaskType(e.target.value)} />
+                <input className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm placeholder:text-gray-300" placeholder="visit_url" value={taskType} onChange={e => setTaskType(e.target.value)} />
+                <p className="mt-1 text-[0.7rem] text-ink-soft/40">Registered: {KNOWN_TYPES.join(' · ')}</p>
               </div>
               <div className="min-w-[150px] flex-[2]">
                 <label className="mb-1 block text-xs font-semibold text-ink-soft/50 uppercase tracking-wider">Params (JSON)</label>
@@ -245,4 +248,3 @@ function TaskItem({
     </div>
   )
 }
-

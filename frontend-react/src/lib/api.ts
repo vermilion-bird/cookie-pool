@@ -1,29 +1,48 @@
 import type { Account, Task, LoginStartResponse, LoginCompleteResponse, GridInstance, GridCheckResult } from '@/types'
 
+const API_KEY_STORAGE = 'cp_api_key'
+
+export function getApiKey(): string {
+  return localStorage.getItem(API_KEY_STORAGE) || 'dev-key'
+}
+
+export function setApiKey(key: string): void {
+  if (key.trim()) localStorage.setItem(API_KEY_STORAGE, key.trim())
+  else localStorage.removeItem(API_KEY_STORAGE)
+}
+
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
   const res = await fetch(url, {
-    headers: { 'Content-Type': 'application/json', ...(options?.headers ?? {}) },
+    headers: {
+      'Content-Type': 'application/json',
+      'X-API-Key': getApiKey(),
+      ...(options?.headers ?? {}),
+    },
     ...options,
   })
   const data = await res.json().catch(() => ({}))
   if (!res.ok) {
-    throw new Error(data.detail || `HTTP ${res.status}`)
+    const detail = (data as { detail?: string }).detail
+    if (res.status === 401) {
+      throw new Error('Invalid API key — set the correct key via the 🔑 button in the header')
+    }
+    throw new Error(detail || `HTTP ${res.status}`)
   }
   return data as T
 }
 
 export const api = {
-  health: () => request<{ status: string }>('/health'),
+  health: () => request<{ status: string; version: string; database: string }>('/health'),
 
   accounts: {
     list: () => request<{ accounts: Account[] }>('/api/accounts'),
     get: (id: number) => request<{ account: Account }>(`/api/accounts/${id}`),
-    create: (payload: { name: string; platform: string; notes?: string; grid_id?: number | null }) =>
+    create: (payload: { name: string; platform: string; notes?: string; grid_id?: number | null; login_indicator?: string | null }) =>
       request<{ account: Account }>('/api/accounts', {
         method: 'POST',
         body: JSON.stringify(payload),
       }),
-    update: (id: number, payload: { name?: string; notes?: string; grid_id?: number | null }) =>
+    update: (id: number, payload: { name?: string; platform?: string; notes?: string; grid_id?: number | null; login_indicator?: string | null }) =>
       request<{ account: Account }>(`/api/accounts/${id}`, {
         method: 'PUT',
         body: JSON.stringify(payload),
@@ -63,7 +82,7 @@ export const api = {
         method: 'POST',
         body: JSON.stringify(payload),
       }),
-    run: (id: number) => request<{ task: Task }>(`/api/tasks/${id}/run`, { method: 'POST' }),
+    run: (id: number) => request<{ task: Task; queued: boolean }>(`/api/tasks/${id}/run`, { method: 'POST' }),
     cancel: (id: number) => request<{ status: string }>(`/api/tasks/${id}/cancel`, { method: 'POST' }),
   },
 }

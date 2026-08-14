@@ -7,20 +7,11 @@ from sqlalchemy.orm import Session
 from database import get_db
 from models import Account
 from services.task_service import TaskService
-from services.browser_service import BrowserService
-from services.grid_service import GridService
+from executors.registry import get_executor, ExecutorError
+from worker import worker
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
-grid_service = GridService()
-
-
-def get_grid_url_for_account(account: Account) -> str:
-    """根据账号绑定的 Grid 确定 hub URL。"""
-    if account.grid_id and account.grid:
-        return account.grid.hub_url
-    from config import GRID_URL
-    return GRID_URL
 
 
 class TaskCreate(BaseModel):
@@ -29,34 +20,23 @@ class TaskCreate(BaseModel):
     params: str = "{}"
 
 
-class DefaultTaskExecutor:
-    """默认任务执行器 — 打开目标 URL 后截图返回。实际使用时子类化 BrowserService 重写 execute()。"""
-
-    @staticmethod
-    def setup_browser(account):
-        grid_url = get_grid_url_for_account(account)
-        browser = BrowserService(account, grid_service)
-        browser.create_session(grid_url=grid_url)
-        return browser
-
-    @staticmethod
-    def execute(db, browser, task) -> dict:
-        params = json.loads(task.params) if task.params else {}
-        target_url = params.get("url", "")
-        if target_url:
-            browser.navigate(target_url)
-        return {"screenshot": "taken"}
-
-    @staticmethod
-    def teardown_browser(browser):
-        browser.close_session()
-
-
-task_executor = DefaultTaskExecutor()
+def _validate_payload(task_type: str, params: str) -> None:
+    try:
+        get_executor(task_type)
+    except ExecutorError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    try:
+        json.loads(params or "{}")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="params must be valid JSON")
 
 
 @router.post("")
 def create_task(data: TaskCreate, db: Session = Depends(get_db)):
+    account = db.query(Account).filter(Account.id == data.account_id).first()
+    if not account:
+        raise HTTPException(status_code=404, detail=f"Account {data.account_id} not found")
+    _validate_payload(data.type, data.params)
     task = TaskService.create(db, data.account_id, data.type, data.params)
     return {"task": task.to_dict()}
 
@@ -77,12 +57,16 @@ def get_task(task_id: int, db: Session = Depends(get_db)):
 
 @router.post("/{task_id}/run")
 def run_task(task_id: int, db: Session = Depends(get_db)):
-    """手动触发执行 PENDING 任务。"""
+    """把 PENDING 任务放入后台执行队列，立即返回。"""
     task = TaskService.get_by_id(db, task_id)
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
-    task = TaskService.run(db, task, task_executor)
-    return {"task": task.to_dict()}
+    if task.status != "PENDING":
+        raise HTTPException(status_code=400, detail=f"Task is {task.status}; only PENDING tasks can be queued")
+    _validate_payload(task.type, task.params)
+    worker.submit(task.id)
+    logger.info(f"Task {task.id} queued for background execution")
+    return {"task": task.to_dict(), "queued": True, "message": "Task queued for background execution"}
 
 
 @router.post("/{task_id}/cancel")

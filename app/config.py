@@ -13,7 +13,7 @@ DATA_DIR = os.getenv("DATA_DIR", "/data")
 DB_PATH = os.path.join(DATA_DIR, "accounts.db")
 PROFILES_DIR = os.path.join(DATA_DIR, "profiles")
 
-# API 认证
+# API 认证（生产环境必须通过环境变量 API_KEY 注入强密钥；dev-key 仅限本地开发）
 API_KEY = os.getenv("API_KEY", "dev-key")
 
 # 浏览器配置
