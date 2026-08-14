@@ -19,15 +19,51 @@ React SPA (Vite build, served by FastAPI) → FastAPI API → Selenium Grid → 
 
 ### 生产部署（Docker）
 
+> **安全要求**：v0.3.0 起所有 `/api/*` 请求强制 `X-API-Key` 认证。生产环境**必须**通过环境变量注入强密钥，禁止使用默认 `dev-key` 或占位符 `***`。生成密钥：
+
+```bash
+openssl rand -hex 24   # 例如 14c8...fe10，妥善保管，勿提交到仓库
+```
+
+```yaml
+# docker-compose.yml — app 服务环境变量（生产建议值）
+environment:
+  - GRID_URL=http://selenium-hub:4444
+  - DATA_DIR=/data
+  - API_KEY=<openssl rand -hex 24 生成的值>   # 必填，强密钥
+  - HOST_ADDRESS=<服务器公网 IP>              # noVNC 公网访问用
+  - NOVNC_PORT=7901
+  - NOTIFY_WEBHOOK_URL=<可选>                 # 任务完成/失败 Webhook
+  - SCHEDULER_TICK_SECONDS=30                 # 可选，调度器 tick 间隔
+```
+
+首次部署 / 升级发布：
+
 ```bash
 docker compose up -d --build
 ```
 
-访问 `http://localhost:8080/` 打开 Web Admin（FastAPI 直接托管编译好的 React 产物）。
+访问 `http://<HOST_ADDRESS>:8080/` 打开 Web Admin。浏览器端点右上角 **🔑** 按钮输入 `API_KEY`（存于 localStorage），否则 API 请求会 401。
+
+**升级已有部署**（服务器上无 git 时，用 rsync 同步代码 + 重建容器）：
+
+```bash
+# 本地：同步代码到服务器（排除 .git / data / 构建产物，保护生产数据）
+rsync -az --delete \
+  --exclude='.git' --exclude='data' --exclude='node_modules' --exclude='.venv' \
+  --exclude='dist' --exclude='.npm-cache' --exclude='__pycache__' --exclude='*.pyc' \
+  --exclude='*.tsbuildinfo' --exclude='.env' \
+  -e ssh ./ ubuntu@<SERVER>:/opt/docker/compose/app/cookie-pool/
+
+# 服务器：重建并启动（多阶段构建会自动编译前端 + 安装依赖）
+ssh ubuntu@<SERVER> 'cd /opt/docker/compose/app/cookie-pool && docker compose up -d --build'
+```
+
+> `data/` 目录（SQLite + Chrome Profiles）必须保留在服务器上并挂载进容器，切勿被同步覆盖或删除。
 
 ### 本地开发（前端热更新）
 
-> **API 认证**：v0.3.0 起所有 `/api/*` 请求需携带 `X-API-Key` 头（默认 `dev-key`，仅限本地；生产通过 `API_KEY` 环境变量注入强密钥）。前端右上角 🔑 按钮可设置密钥（存于 localStorage）。
+> **API 认证**：所有 `/api/*` 请求需携带 `X-API-Key` 头（默认 `dev-key`，仅限本地；生产通过 `API_KEY` 环境变量注入强密钥）。前端右上角 🔑 按钮可设置密钥（存于 localStorage）。
 
 ```bash
 # 后端（需要本机已跑起 Selenium Grid，或指向远程 Grid）
@@ -36,7 +72,6 @@ cd app && pip install -r requirements.txt && uvicorn main:app --reload --port 80
 # 前端（另开一个终端；Vite dev server 会把 /api、/health 代理到 :8080）
 cd frontend-react && npm install --include=dev && npm run dev
 ```
-
 ## 目录结构
 
 ```
