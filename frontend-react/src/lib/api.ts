@@ -1,4 +1,7 @@
-import type { Account, Task, LoginStartResponse, LoginCompleteResponse, GridInstance, GridCheckResult } from '@/types'
+import type {
+  Account, Task, Schedule, TaskTypeMeta,
+  LoginStartResponse, LoginCompleteResponse, GridInstance, GridCheckResult,
+} from '@/types'
 
 const API_KEY_STORAGE = 'cp_api_key'
 
@@ -11,6 +14,13 @@ export function setApiKey(key: string): void {
   else localStorage.removeItem(API_KEY_STORAGE)
 }
 
+function authError(res: Response, data: unknown): Error {
+  if (res.status === 401) {
+    return new Error('Invalid API key — set the correct key via the 🔑 button in the header')
+  }
+  return new Error((data as { detail?: string }).detail || `HTTP ${res.status}`)
+}
+
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
   const res = await fetch(url, {
     headers: {
@@ -21,13 +31,20 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
     ...options,
   })
   const data = await res.json().catch(() => ({}))
-  if (!res.ok) {
-    const detail = (data as { detail?: string }).detail
-    if (res.status === 401) {
-      throw new Error('Invalid API key — set the correct key via the 🔑 button in the header')
-    }
-    throw new Error(detail || `HTTP ${res.status}`)
-  }
+  if (!res.ok) throw authError(res, data)
+  return data as T
+}
+
+async function upload<T>(url: string, file: File): Promise<T> {
+  const fd = new FormData()
+  fd.append('file', file)
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'X-API-Key': getApiKey() },
+    body: fd,
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw authError(res, data)
   return data as T
 }
 
@@ -48,6 +65,7 @@ export const api = {
         body: JSON.stringify(payload),
       }),
     remove: (id: number) => request<{ status: string }>(`/api/accounts/${id}`, { method: 'DELETE' }),
+    importCsv: (file: File) => upload<{ created: number; skipped: { name: string; reason: string }[] }>('/api/accounts/import', file),
 
     startLogin: (id: number) =>
       request<LoginStartResponse>(`/api/accounts/${id}/login`, { method: 'POST' }),
@@ -77,12 +95,40 @@ export const api = {
   tasks: {
     list: () => request<{ tasks: Task[] }>('/api/tasks'),
     get: (id: number) => request<{ task: Task }>(`/api/tasks/${id}`),
-    create: (payload: { account_id: number; type: string; params?: string }) =>
+    types: () => request<{ types: TaskTypeMeta[] }>('/api/tasks/meta/types'),
+    create: (payload: { account_id: number; type: string; params?: string; max_retries?: number; retry_delay_seconds?: number }) =>
       request<{ task: Task }>('/api/tasks', {
         method: 'POST',
         body: JSON.stringify(payload),
       }),
     run: (id: number) => request<{ task: Task; queued: boolean }>(`/api/tasks/${id}/run`, { method: 'POST' }),
     cancel: (id: number) => request<{ status: string }>(`/api/tasks/${id}/cancel`, { method: 'POST' }),
+    batchRun: (taskIds: number[]) => request<{ queued: number; skipped: number[] }>('/api/tasks/batch-run', {
+      method: 'POST',
+      body: JSON.stringify({ task_ids: taskIds }),
+    }),
+    batchCancel: (taskIds: number[]) => request<{ cancelled: number }>('/api/tasks/batch-cancel', {
+      method: 'POST',
+      body: JSON.stringify({ task_ids: taskIds }),
+    }),
+    artifacts: (id: number) => request<{ task_id: number; artifacts: string[] }>(`/api/tasks/${id}/artifacts`),
+    artifactUrl: (id: number, name: string) => `/api/tasks/${id}/artifacts/${encodeURIComponent(name)}`,
+  },
+
+  schedules: {
+    list: () => request<{ schedules: Schedule[] }>('/api/schedules'),
+    get: (id: number) => request<{ schedule: Schedule }>(`/api/schedules/${id}`),
+    create: (payload: { name: string; cron: string; task_type: string; params?: string; account_id?: number | null; enabled?: boolean }) =>
+      request<{ schedule: Schedule }>('/api/schedules', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      }),
+    update: (id: number, payload: Partial<Schedule>) =>
+      request<{ schedule: Schedule }>(`/api/schedules/${id}`, {
+        method: 'PUT',
+        body: JSON.stringify(payload),
+      }),
+    remove: (id: number) => request<{ status: string }>(`/api/schedules/${id}`, { method: 'DELETE' }),
+    trigger: (id: number) => request<{ triggered: number; schedule: Schedule }>(`/api/schedules/${id}/trigger`, { method: 'POST' }),
   },
 }

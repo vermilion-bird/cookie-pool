@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/lib/api'
 import { Card, CardSection, CardHeader } from '@/components/Card'
@@ -116,6 +116,22 @@ export function Accounts() {
     onError: (e: Error) => toast('Failed: ' + e.message, 'error'),
   })
 
+  const importFileRef = useRef<HTMLInputElement>(null)
+  const importMutation = useMutation({
+    mutationFn: (file: File) => api.accounts.importCsv(file),
+    onSuccess: (data) => {
+      toast(`Imported ${data.created} account(s)${data.skipped.length ? `, skipped ${data.skipped.length}` : ''}`, 'success')
+      invalidateAccounts()
+    },
+    onError: (e: Error) => toast('Import failed: ' + e.message, 'error'),
+  })
+
+  function handleImportFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (file) importMutation.mutate(file)
+    e.target.value = ''
+  }
+
   function handleCreate() {
     if (!form.name.trim() || !form.platform.trim()) {
       toast('Name and platform are required', 'error')
@@ -162,9 +178,15 @@ export function Accounts() {
           <h1 className="page-title">Accounts</h1>
           <p className="page-subtitle">{accounts.length} account(s) · {filtered.length} showing</p>
         </div>
-        <Button variant="success" onClick={() => setShowCreate(!showCreate)}>
-          {showCreate ? 'Cancel' : '+ New Account'}
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" loading={importMutation.isPending} onClick={() => importFileRef.current?.click()}>
+            ⬆ Import CSV
+          </Button>
+          <input ref={importFileRef} type="file" accept=".csv,text/csv" className="hidden" onChange={handleImportFile} />
+          <Button variant="success" onClick={() => setShowCreate(!showCreate)}>
+            {showCreate ? 'Cancel' : '+ New Account'}
+          </Button>
+        </div>
       </div>
 
       {/* Create Account form */}

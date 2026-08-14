@@ -48,6 +48,20 @@ def init_db():
             conn.execute(text("ALTER TABLE accounts ADD COLUMN login_indicator VARCHAR(512)"))
             conn.commit()
 
+    # Add Task retry/artifact columns (migration to v0.4.0)
+    task_cols = {col["name"] for col in inspector.get_columns("tasks")}
+    task_adds = {
+        "retry_count": "INTEGER DEFAULT 0",
+        "max_retries": "INTEGER DEFAULT 0",
+        "retry_delay_seconds": "INTEGER DEFAULT 30",
+        "artifact_paths": "TEXT DEFAULT '[]'",
+    }
+    for col, ddl in task_adds.items():
+        if col not in task_cols:
+            with engine.connect() as conn:
+                conn.execute(text(f"ALTER TABLE tasks ADD COLUMN {col} {ddl}"))
+                conn.commit()
+
     # Auto-create default grid instance if the grid table is empty
     with SessionLocal() as db:
         from models import GridInstance as GI

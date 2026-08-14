@@ -66,9 +66,33 @@ export interface Task {
   status: TaskStatus
   result: string | null
   error: string | null
+  retry_count: number
+  max_retries: number
+  retry_delay_seconds: number
+  artifact_paths: string[]
   created_at: string | null
   started_at: string | null
   completed_at: string | null
+}
+
+export interface Schedule {
+  id: number
+  name: string
+  cron: string
+  task_type: string
+  params: string
+  account_id: number | null
+  enabled: boolean
+  last_run_at: string | null
+  next_run_at: string | null
+  created_at: string | null
+  updated_at: string | null
+}
+
+export interface TaskTypeMeta {
+  type: string
+  description: string
+  params_template: Record<string, unknown>
 }
 
 export interface LoginStartResponse {

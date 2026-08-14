@@ -12,6 +12,13 @@ NOVNC_PORT = os.getenv("NOVNC_PORT", "7900")
 DATA_DIR = os.getenv("DATA_DIR", "/data")
 DB_PATH = os.path.join(DATA_DIR, "accounts.db")
 PROFILES_DIR = os.path.join(DATA_DIR, "profiles")
+ARTIFACTS_DIR = os.path.join(DATA_DIR, "artifacts")
+
+# 调度器
+SCHEDULER_TICK_SECONDS = int(os.getenv("SCHEDULER_TICK_SECONDS", "30"))
+
+# 通知（Webhook，配置后任务完成/失败事件将 POST JSON 到该 URL）
+NOTIFY_WEBHOOK_URL = os.getenv("NOTIFY_WEBHOOK_URL", "")
 
 # API 认证（生产环境必须通过环境变量 API_KEY 注入强密钥；dev-key 仅限本地开发）
 API_KEY = os.getenv("API_KEY", "dev-key")

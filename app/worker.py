@@ -51,8 +51,14 @@ class TaskWorker:
         self._threads.clear()
         logger.info("TaskWorker stopped")
 
-    def submit(self, task_id: int) -> None:
-        self._queue.put(task_id)
+    def submit(self, task_id: int, delay_seconds: float = 0) -> None:
+        """入队任务；delay_seconds > 0 时延迟入队（用于失败重试）。"""
+        if delay_seconds and delay_seconds > 0:
+            t = threading.Timer(delay_seconds, self._queue.put, args=(task_id,))
+            t.daemon = True
+            t.start()
+        else:
+            self._queue.put(task_id)
 
     def _loop(self) -> None:
         while self._running:
@@ -87,6 +93,12 @@ class TaskWorker:
                 logger.warning(f"Task {task_id} failed: {e}")
                 return
             TaskService.run(db, task, executor_cls)
+            db.refresh(task)
+            # 失败且配置了重试：任务已被置回 PENDING，延迟重投
+            if task.status == "PENDING" and task.retry_count > 0:
+                self.submit(task.id, delay_seconds=task.retry_delay_seconds)
+                logger.info(f"Task {task.id} scheduled for retry #{task.retry_count} "
+                            f"in {task.retry_delay_seconds}s")
         finally:
             db.close()
 

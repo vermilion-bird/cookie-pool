@@ -1,7 +1,7 @@
 import logging
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -75,6 +75,43 @@ def create_account(data: AccountCreate, db: Session = Depends(get_db)):
                                      notes=data.notes, grid_id=data.grid_id,
                                      login_indicator=data.login_indicator)
     return {"account": account.to_dict(include_grid=True)}
+
+
+@router.post("/import")
+async def import_accounts(file: UploadFile = File(...), db: Session = Depends(get_db)):
+    """CSV 批量导入账号。列：name, platform, notes, grid, login_indicator。"""
+    import csv
+    import io
+    content = await file.read()
+    text = content.decode("utf-8-sig", errors="replace")
+    reader = csv.DictReader(io.StringIO(text))
+    created, skipped = [], []
+    for row in reader:
+        name = (row.get("name") or "").strip()
+        platform = (row.get("platform") or "").strip()
+        if not name or not platform:
+            skipped.append({"name": name, "reason": "missing name/platform"})
+            continue
+        if db.query(Account).filter(Account.name == name).first():
+            skipped.append({"name": name, "reason": "already exists"})
+            continue
+        grid_id = None
+        grid_name = (row.get("grid") or "").strip()
+        if grid_name and grid_name.lower() != "default":
+            grid = db.query(GridInstance).filter(GridInstance.name == grid_name).first()
+            if not grid:
+                skipped.append({"name": name, "reason": f"grid '{grid_name}' not found"})
+                continue
+            grid_id = grid.id
+        account = AccountService.create(
+            db, name=name, platform=platform,
+            notes=(row.get("notes") or ""),
+            grid_id=grid_id,
+            login_indicator=((row.get("login_indicator") or "").strip() or None),
+        )
+        created.append(account.id)
+    logger.info(f"CSV import: created {len(created)}, skipped {len(skipped)}")
+    return {"created": len(created), "skipped": skipped}
 
 
 @router.get("/{account_id}")

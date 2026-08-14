@@ -2,7 +2,7 @@
 
 > 无桌面服务器上的账号管理与自动化执行平台。
 >
-> **当前版本：v0.3.0** — 详见 [ROADMAP.md](./ROADMAP.md)（Phase 1：API 认证、异步任务执行、会话超时回收、测试体系）。
+> **当前版本：v0.4.0** — 详见 [ROADMAP.md](./ROADMAP.md)（Phase 1 根基加固 ✅ · Phase 2 自动化闭环 ✅）。
 
 ## 架构
 
@@ -49,8 +49,11 @@ cookie-pool/
 │   ├── config.py             # 配置
 │   ├── database.py           # SQLite
 │   ├── models.py             # ORM 模型
-│   ├── api/                  # API 路由
-│   └── services/             # 业务服务
+│   ├── api/                  # API 路由（accounts/tasks/grids/schedules）
+│   ├── services/             # 业务服务（含 cron 解析器）
+│   ├── scheduler.py          # cron 调度线程
+│   ├── worker.py             # 后台任务执行器 + 会话回收器
+│   └── notifiers.py          # Webhook 通知
 ├── frontend-react/           # React 19 + Vite + TS + Tailwind 前端
 │   ├── src/
 │   │   ├── pages/            # Dashboard / Accounts / Tasks
@@ -86,14 +89,19 @@ WAIT_LOGIN → ACTIVE ↔ IN_USE
 | 登录 | `POST /api/accounts/{id}/login/complete` | 确认登录（经 Grid REST 校验现有会话） |
 | 登录 | `POST /api/accounts/{id}/login/cancel` | 取消登录 |
 | Session | `GET/DELETE /api/sessions/{id}` | 会话管理 |
-| 任务 | `POST /api/tasks` | 创建任务（校验执行器类型与 JSON 参数） |
+| 任务 | `POST /api/tasks` | 创建任务（支持 `max_retries`/`retry_delay_seconds`） |
 | 任务 | `GET /api/tasks` | 任务列表 |
 | 任务 | `GET /api/tasks/{id}` | 任务详情 |
 | 任务 | `POST /api/tasks/{id}/run` | 入队后台执行（立即返回，异步运行） |
 | 任务 | `POST /api/tasks/{id}/cancel` | 取消任务 |
-| Grid | `GET/POST /api/grids`、`/{id}/check` 等 | Grid 管理（原样） |
+| 任务 | `POST /api/tasks/batch-run` `/batch-cancel` | 批量入队/取消 |
+| 任务 | `GET /api/tasks/meta/types` | 任务类型元数据（模板） |
+| 任务 | `GET /api/tasks/{id}/artifacts` | 任务产物（截图）列表/下载 |
+| 调度 | `GET/POST /api/schedules`、`/{id}/trigger` 等 | cron 调度 CRUD + 立即触发 |
+| 账号 | `POST /api/accounts/import` | CSV 批量导入账号 |
+| Grid | `GET/POST /api/grids`、`/{id}/check` 等 | Grid 管理 |
 
-内置任务执行器（`app/executors/registry.py`）：`visit_url`、`check_login_status`。自定义执行器通过注册表扩展。
+内置任务执行器（`app/executors/registry.py`）：`visit_url`、`check_login_status`（截图自动归档到 `data/artifacts`）。自定义执行器通过注册表扩展。任务失败支持自动重试（`max_retries`）；配置 `NOTIFY_WEBHOOK_URL` 后任务完成/失败事件将推送 Webhook。
 
 ## 测试
 
@@ -111,4 +119,5 @@ cd frontend-react && npm test
 |------|------|
 | `/` | Dashboard — 账号统计 + 最近任务 |
 | `/accounts` | 账号管理 — 创建 / 筛选 / 登录（noVNC 弹窗）/ 删除 |
-| `/tasks` | 任务管理 — 创建 / 筛选 / 运行 / 取消 / 详情 |
+| `/tasks` | 任务管理 — 模板创建 / 筛选 / 运行(Run All) / 取消 / 详情(截图预览) |
+| `/schedules` | 定时调度 — cron 创建 / 启停 / 立即触发 / 下次执行时间 |

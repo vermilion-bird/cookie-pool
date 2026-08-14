@@ -1,6 +1,7 @@
 import json
 import logging
 from datetime import datetime, timezone
+from pathlib import Path
 
 from sqlalchemy.orm import Session
 
@@ -50,6 +51,7 @@ class TaskService:
             task.error = str(e)
             task.completed_at = datetime.now(timezone.utc)
             db.commit()
+            _notify("task.failed", task)
             logger.warning(f"Task {task.id} failed: {e}")
             return task
 
@@ -75,12 +77,24 @@ class TaskService:
             task.status = "COMPLETED"
             task.result = json.dumps(result, ensure_ascii=False) if result else "{}"
             task.completed_at = datetime.now(timezone.utc)
+            TaskService._collect_artifacts(db, task)
+            db.commit()
             logger.info(f"Task {task.id} completed")
+            _notify("task.completed", task)
         except Exception as e:
-            task.status = "FAILED"
             task.error = str(e)
-            task.completed_at = datetime.now(timezone.utc)
-            logger.error(f"Task {task.id} failed: {e}")
+            if task.retry_count < task.max_retries:
+                # 配置了重试：置回 PENDING，由 worker 延迟重投
+                task.retry_count += 1
+                task.status = "PENDING"
+                task.error = f"{e} (will retry {task.retry_count}/{task.max_retries})"
+                task.completed_at = None
+                logger.warning(f"Task {task.id} will retry ({task.retry_count}/{task.max_retries}): {e}")
+            else:
+                task.status = "FAILED"
+                task.completed_at = datetime.now(timezone.utc)
+                logger.error(f"Task {task.id} failed: {e}")
+                _notify("task.failed", task)
         finally:
             try:
                 if browser is not None:
@@ -93,6 +107,15 @@ class TaskService:
         return task
 
     @staticmethod
+    def _collect_artifacts(db: Session, task: Task) -> None:
+        """扫描任务产物目录并记录文件名列表。"""
+        from config import ARTIFACTS_DIR
+        d = Path(ARTIFACTS_DIR) / f"task_{task.id}"
+        if d.is_dir():
+            files = sorted(f.name for f in d.iterdir() if f.is_file())
+            task.artifact_paths = json.dumps(files)
+
+    @staticmethod
     def cancel(db: Session, task_id: int) -> bool:
         task = TaskService.get_by_id(db, task_id)
         if not task or task.status in ("COMPLETED", "CANCELLED"):
@@ -102,3 +125,18 @@ class TaskService:
         db.commit()
         logger.info(f"Task {task.id} cancelled")
         return True
+
+def _notify(event: str, task: Task) -> None:
+    """任务事件通知（Webhook）。"""
+    from notifiers import notify
+    payload = {
+        "task_id": task.id,
+        "account_id": task.account_id,
+        "type": task.type,
+        "status": task.status,
+    }
+    if event == "task.completed":
+        payload["result"] = task.result
+    if event == "task.failed":
+        payload["error"] = task.error
+    notify(event, payload)

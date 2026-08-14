@@ -6,13 +6,34 @@
 
 ## [Unreleased]
 
-### 规划中（Phase 2 — 自动化闭环，目标 v0.4.x）
+### 规划中（Phase 3 — 规模化与多用户，目标 v0.5.x）
 
-- cron 定时调度器（DB 表 `schedules` + 后台调度线程）
-- 任务模板库（visit_url / screenshot / check_login_status 等参数化模板）
-- 任务结果资产化（截图/文件归档 + 在线预览下载）
-- 通知渠道（Webhook / 飞书机器人 / 邮件）与失败重试、告警策略
-- 批量操作（CSV 导入账号、批量运行/取消任务）
+- 多 Grid 容量感知调度与自动放置
+- 数据库升级路径（SQLite → PostgreSQL 可选）
+- 列表分页与服务端过滤
+- 结构化日志 / Prometheus 指标 / 审计日志
+- RBAC 多用户（JWT）与团队隔离
+- 账号导入导出与备份恢复
+
+## [0.4.0] - 2026-08-14 — Phase 2 自动化闭环
+
+### Added
+
+- **cron 调度器**：`schedules` 表 + 轻量 cron 解析器（`app/services/cron.py`，支持 `*`/`*/n`/`a-b`/`a,b`）+ 后台调度线程（`app/scheduler.py`），按计划为目标账号创建任务并入队
+- **Schedules API 与页面**：CRUD + 启停 + 立即触发（`trigger`）+ 下次执行时间预览
+- **任务结果资产化**：截图/文件保存到 `data/artifacts/{task_id}/`，`GET /api/tasks/{id}/artifacts` 列表与下载（含路径穿越防护），前端详情弹窗可预览/下载
+- **失败重试**：任务级 `max_retries`/`retry_delay_seconds`，失败自动延迟重投，重试耗尽后 FAILED
+- **Webhook 通知**（`app/notifiers.py`）：任务完成/失败事件 POST JSON 到 `NOTIFY_WEBHOOK_URL`，渠道故障不影响主流程
+- **任务类型元数据**：`GET /api/tasks/meta/types` 返回类型/描述/参数模板，前端创建表单支持模板下拉
+- **批量操作**：`POST /api/tasks/batch-run`、`/batch-cancel`；`POST /api/accounts/import` CSV 批量导入账号（含去重与 Grid 校验）
+- 前端 **Schedules 页面**（路由 `/schedules`）与 Tasks 页"Run All Pending"按钮
+
+### Changed
+
+- `POST /api/tasks` 支持 `max_retries`/`retry_delay_seconds` 参数
+- Task 模型新增 `retry_count`/`max_retries`/`retry_delay_seconds`/`artifact_paths`（含 SQLite 迁移）
+- 任务完成/失败时发送 Webhook 事件
+- 版本号 `0.4.0`（前后端对齐）
 
 ## [0.3.0] - 2026-08-14 — Phase 1 根基加固
 

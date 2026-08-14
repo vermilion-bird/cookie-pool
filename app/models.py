@@ -1,8 +1,50 @@
 from datetime import datetime, timezone
-from sqlalchemy import Column, Integer, String, DateTime, Text, ForeignKey
+from sqlalchemy import Boolean, Column, Integer, String, DateTime, Text, ForeignKey
 from sqlalchemy.orm import relationship
 
 from database import Base
+
+
+class Schedule(Base):
+    """cron 定时调度：按计划为目标账号创建任务。account_id 为空 = 所有 ACTIVE 账号。"""
+
+    __tablename__ = "schedules"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String(128), nullable=False)
+    cron = Column(String(64), nullable=False, comment="5 段 cron: 分 时 日 月 周(1-7)")
+    task_type = Column(String(128), nullable=False)
+    params = Column(Text, default="{}")
+    account_id = Column(Integer, ForeignKey("accounts.id"), nullable=True,
+                        comment="null = 所有 ACTIVE 账号")
+    enabled = Column(Boolean, nullable=False, default=True)
+    last_run_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc),
+                        onupdate=lambda: datetime.now(timezone.utc))
+
+    account = relationship("Account", back_populates="schedules")
+
+    def next_run_at(self):
+        """下一个匹配时间（UTC ISO 字符串）。"""
+        from services.cron import next_run
+        nxt = next_run(self.cron, datetime.now(timezone.utc))
+        return nxt.isoformat() if nxt else None
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "name": self.name,
+            "cron": self.cron,
+            "task_type": self.task_type,
+            "params": self.params,
+            "account_id": self.account_id,
+            "enabled": self.enabled,
+            "last_run_at": self.last_run_at.isoformat() if self.last_run_at else None,
+            "next_run_at": self.next_run_at() if self.enabled else None,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+        }
 
 
 class GridInstance(Base):
@@ -59,6 +101,7 @@ class Account(Base):
 
     sessions = relationship("BrowserSession", back_populates="account", cascade="all, delete-orphan")
     tasks = relationship("Task", back_populates="account", cascade="all, delete-orphan")
+    schedules = relationship("Schedule", back_populates="account", cascade="all, delete-orphan")
     grid = relationship("GridInstance", back_populates="accounts")
 
     def to_dict(self, include_grid=False):
@@ -117,6 +160,10 @@ class Task(Base):
     status = Column(String(32), nullable=False, default="PENDING")
     result = Column(Text, nullable=True)
     error = Column(Text, nullable=True)
+    retry_count = Column(Integer, nullable=False, default=0)
+    max_retries = Column(Integer, nullable=False, default=0)
+    retry_delay_seconds = Column(Integer, nullable=False, default=30)
+    artifact_paths = Column(Text, default="[]")
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     started_at = Column(DateTime, nullable=True)
     completed_at = Column(DateTime, nullable=True)
@@ -132,7 +179,18 @@ class Task(Base):
             "status": self.status,
             "result": self.result,
             "error": self.error,
+            "retry_count": self.retry_count,
+            "max_retries": self.max_retries,
+            "retry_delay_seconds": self.retry_delay_seconds,
+            "artifact_paths": self.artifact_list(),
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "started_at": self.started_at.isoformat() if self.started_at else None,
             "completed_at": self.completed_at.isoformat() if self.completed_at else None,
         }
+
+    def artifact_list(self) -> list:
+        import json
+        try:
+            return json.loads(self.artifact_paths or "[]")
+        except (ValueError, TypeError):
+            return []
