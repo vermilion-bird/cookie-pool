@@ -1,11 +1,11 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/lib/api'
-import { Card, CardHeader } from '@/components/Card'
+import { Card, CardSection, CardHeader } from '@/components/Card'
 import { Button } from '@/components/Button'
 import { Badge } from '@/components/Badge'
 import { Modal } from '@/components/Modal'
-import { EmptyState, SkeletonRow } from '@/components/EmptyState'
+import { EmptyState, SkeletonCard } from '@/components/EmptyState'
 import { useToast } from '@/hooks/useToast'
 import { fmtDate } from '@/lib/format'
 import type { GridInstance } from '@/types'
@@ -16,7 +16,6 @@ export function Grids() {
   const [showCreate, setShowCreate] = useState(false)
   const [editGrid, setEditGrid] = useState<GridInstance | null>(null)
 
-  // Form state
   const [formName, setFormName] = useState('')
   const [formHubUrl, setFormHubUrl] = useState('')
   const [formNovnc, setFormNovnc] = useState('')
@@ -30,23 +29,19 @@ export function Grids() {
   })
 
   const grids = data?.grids ?? []
+  const onlineGrids = grids.filter(g => g.status === 'ONLINE')
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ['grids'] })
 
   function resetForm() {
-    setFormName('')
-    setFormHubUrl('')
-    setFormNovnc('')
-    setFormMaxSessions(1)
-    setFormNotes('')
+    setFormName(''); setFormHubUrl(''); setFormNovnc('')
+    setFormMaxSessions(1); setFormNotes('')
   }
 
   function populateEdit(g: GridInstance) {
-    setFormName(g.name)
-    setFormHubUrl(g.hub_url)
+    setFormName(g.name); setFormHubUrl(g.hub_url)
     setFormNovnc(g.novnc_base_url ?? '')
-    setFormMaxSessions(g.max_sessions)
-    setFormNotes(g.notes)
+    setFormMaxSessions(g.max_sessions); setFormNotes(g.notes)
   }
 
   const createMutation = useMutation({
@@ -75,116 +70,157 @@ export function Grids() {
 
   const checkMutation = useMutation({
     mutationFn: (id: number) => api.grids.check(id),
-    onSuccess: (data) => { toast(`${data.name}: ${data.status} (${data.nodes} node(s))`, data.status === 'ONLINE' ? 'success' : 'error'); invalidate() },
+    onSuccess: (data) => {
+      toast(`${data.name}: ${data.status} (${data.nodes} node(s))`, data.status === 'ONLINE' ? 'success' : 'error')
+      invalidate()
+    },
     onError: (e: Error) => toast('Check failed: ' + e.message, 'error'),
   })
 
   const modalOpen = showCreate || editGrid !== null
-  const modalTitle = editGrid ? `Edit Grid #${editGrid.id}` : '➕ New Grid'
+  const modalTitle = editGrid ? `Edit Grid #${editGrid.id}` : 'New Grid'
 
   function handleSave() {
-    if (!formName.trim() || !formHubUrl.trim()) {
-      toast('Name and Hub URL are required', 'error'); return
-    }
+    if (!formName.trim() || !formHubUrl.trim()) { toast('Name and Hub URL are required', 'error'); return }
     if (editGrid) updateMutation.mutate()
     else createMutation.mutate()
   }
 
-  function handleClose() {
-    setShowCreate(false); setEditGrid(null); resetForm()
-  }
+  function handleClose() { setShowCreate(false); setEditGrid(null); resetForm() }
 
   function handleDelete(g: GridInstance) {
-    if (!confirm(`Delete grid "${g.name}"? Accounts assigned to it will need reassignment.`)) return
+    if (!confirm(`Delete "${g.name}"? Accounts assigned to it will need reassignment.`)) return
     deleteMutation.mutate(g.id)
   }
 
   return (
-    <>
+    <div className="space-y-6">
+      {/* Page header */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h1 className="page-title">Grid Instances</h1>
+          <p className="page-subtitle">{grids.length} configured · {onlineGrids.length} online · {grids.reduce((s, g) => s + g.max_sessions, 0)} total slots</p>
+        </div>
+        <Button variant="success" onClick={() => setShowCreate(true)}>+ Add Grid</Button>
+      </div>
+
+      {/* Grid list */}
       <Card>
-        <CardHeader
-          title="🌐 Grid Instances"
-          subtitle={`${grids.length} grid(s) configured`}
-          action={
-            <Button variant="green" size="sm" onClick={() => setShowCreate(true)}>
-              + Add Grid
-            </Button>
-          }
-        />
-        <table className="w-full border-collapse">
-          <thead>
-            <tr className="text-left text-[0.7rem] font-semibold uppercase tracking-wide text-ink-soft">
-              <th className="border-b border-gray-100 bg-gray-50 p-3">ID</th>
-              <th className="border-b border-gray-100 bg-gray-50 p-3">Name</th>
-              <th className="border-b border-gray-100 bg-gray-50 p-3">Hub URL</th>
-              <th className="border-b border-gray-100 bg-gray-50 p-3">Status</th>
-              <th className="border-b border-gray-100 bg-gray-50 p-3">Max Sessions</th>
-              <th className="border-b border-gray-100 bg-gray-50 p-3">Created</th>
-              <th className="border-b border-gray-100 bg-gray-50 p-3">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {isLoading ? (
-              <SkeletonRow cols={7} />
-            ) : grids.length === 0 ? (
-              <tr><td colSpan={7}><EmptyState icon="🌐" message="No grids configured. Add one to manage Selenium Grid instances." /></td></tr>
-            ) : (
-              grids.map((g) => (
-                <tr key={g.id} className="hover:bg-gray-50">
-                  <td className="border-b border-gray-100 p-3 font-mono text-sm text-ink-soft">#{g.id}</td>
-                  <td className="border-b border-gray-100 p-3 text-sm font-semibold">{g.name}</td>
-                  <td className="border-b border-gray-100 p-3 text-xs font-mono text-gray-400">{g.hub_url}</td>
-                  <td className="border-b border-gray-100 p-3"><Badge status={g.status} /></td>
-                  <td className="border-b border-gray-100 p-3 text-sm">{g.max_sessions}</td>
-                  <td className="border-b border-gray-100 p-3 text-xs text-gray-400">{fmtDate(g.created_at)}</td>
-                  <td className="border-b border-gray-100 p-3">
-                    <div className="flex flex-wrap gap-1.5">
-                      <Button variant="default" size="sm" loading={checkMutation.isPending} onClick={() => checkMutation.mutate(g.id)}>🔍 Check</Button>
-                      <Button variant="ghost" size="sm" onClick={() => { setEditGrid(g); populateEdit(g) }}>Edit</Button>
-                      <Button variant="red" size="sm" onClick={() => handleDelete(g)} disabled={g.id === 1}>🗑</Button>
-                    </div>
-                  </td>
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
+        {isLoading ? (
+          <div className="space-y-2 p-5">
+            {[1, 2].map(i => <SkeletonCard key={i} />)}
+          </div>
+        ) : grids.length === 0 ? (
+          <EmptyState icon="🌐" message="No grids configured. Add one to manage Selenium Grid instances." />
+        ) : (
+          <div className="divide-y divide-gray-100">
+            {grids.map(g => (
+              <GridItem
+                key={g.id}
+                grid={g}
+                onCheck={() => checkMutation.mutate(g.id)}
+                onEdit={() => { setEditGrid(g); populateEdit(g) }}
+                onDelete={() => handleDelete(g)}
+                checkLoading={checkMutation.isPending}
+              />
+            ))}
+          </div>
+        )}
       </Card>
 
-      {(showCreate || editGrid) && (
-        <Modal open title={modalTitle} onClose={handleClose}
+      {/* Create / Edit Modal */}
+      {modalOpen && (
+        <Modal
+          open
+          title={modalTitle}
+          onClose={handleClose}
           footer={
             <>
-              <Button variant="green" loading={createMutation.isPending || updateMutation.isPending} onClick={handleSave}>Save</Button>
-              <Button variant="ghost" onClick={handleClose}>Cancel</Button>
+              <Button variant="primary" loading={createMutation.isPending || updateMutation.isPending} onClick={handleSave}>Save</Button>
+              <Button variant="outline" onClick={handleClose}>Cancel</Button>
             </>
-          }>
-          <div className="flex flex-col gap-3 mt-2">
+          }
+        >
+          <div className="space-y-4">
             <div>
-              <label className="mb-1 block text-xs font-medium text-gray-400">Name</label>
-              <input className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-ink focus:outline-none" placeholder="e.g. US West Grid" value={formName} onChange={(e) => setFormName(e.target.value)} />
+              <label className="mb-1.5 block text-xs font-semibold text-ink-soft/50 uppercase tracking-wider">Name</label>
+              <input className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm placeholder:text-gray-300" placeholder="US West Grid" value={formName} onChange={e => setFormName(e.target.value)} />
             </div>
             <div>
-              <label className="mb-1 block text-xs font-medium text-gray-400">Hub URL</label>
-              <input className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm font-mono focus:border-ink focus:outline-none" placeholder="http://selenium-hub:4444" value={formHubUrl} onChange={(e) => setFormHubUrl(e.target.value)} />
+              <label className="mb-1.5 block text-xs font-semibold text-ink-soft/50 uppercase tracking-wider">Hub URL</label>
+              <input className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm font-mono placeholder:text-gray-300" placeholder="http://selenium-hub:4444" value={formHubUrl} onChange={e => setFormHubUrl(e.target.value)} />
             </div>
             <div>
-              <label className="mb-1 block text-xs font-medium text-gray-400">noVNC Base URL (optional)</label>
-              <input className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm font-mono focus:border-ink focus:outline-none" placeholder="http://host:7901/vnc.html" value={formNovnc} onChange={(e) => setFormNovnc(e.target.value)} />
+              <label className="mb-1.5 block text-xs font-semibold text-ink-soft/50 uppercase tracking-wider">noVNC Base URL <span className="text-ink-soft/30">(optional)</span></label>
+              <input className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm font-mono placeholder:text-gray-300" placeholder="http://host:7901/vnc.html" value={formNovnc} onChange={e => setFormNovnc(e.target.value)} />
             </div>
-            <div className="flex gap-3">
+            <div className="flex gap-4">
               <div className="flex-1">
-                <label className="mb-1 block text-xs font-medium text-gray-400">Max Sessions</label>
-                <input type="number" min={1} className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-ink focus:outline-none" value={formMaxSessions} onChange={(e) => setFormMaxSessions(parseInt(e.target.value) || 1)} />
+                <label className="mb-1.5 block text-xs font-semibold text-ink-soft/50 uppercase tracking-wider">Max Sessions</label>
+                <input type="number" min={1} className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm" value={formMaxSessions} onChange={e => setFormMaxSessions(parseInt(e.target.value) || 1)} />
               </div>
               <div className="flex-[2]">
-                <label className="mb-1 block text-xs font-medium text-gray-400">Notes</label>
-                <input className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-ink focus:outline-none" placeholder="Optional" value={formNotes} onChange={(e) => setFormNotes(e.target.value)} />
+                <label className="mb-1.5 block text-xs font-semibold text-ink-soft/50 uppercase tracking-wider">Notes <span className="text-ink-soft/30">(optional)</span></label>
+                <input className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm placeholder:text-gray-300" placeholder="Optional notes" value={formNotes} onChange={e => setFormNotes(e.target.value)} />
               </div>
             </div>
           </div>
         </Modal>
       )}
-    </>
+    </div>
+  )
+}
+
+function GridItem({
+  grid,
+  onCheck,
+  onEdit,
+  onDelete,
+  checkLoading,
+}: {
+  grid: GridInstance
+  onCheck: () => void
+  onEdit: () => void
+  onDelete: () => void
+  checkLoading: boolean
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-4 px-5 py-4 transition-colors hover:bg-gray-50/70 sm:gap-6">
+      {/* Name & Status */}
+      <div className="min-w-0 flex-[2]">
+        <div className="flex items-center gap-2">
+          <span className="text-sm font-semibold text-ink truncate">{grid.name}</span>
+          <Badge status={grid.status} />
+        </div>
+        <p className="mt-0.5 truncate font-mono text-xs text-ink-soft/40">{grid.hub_url}</p>
+      </div>
+
+      {/* Info */}
+      <div className="hidden sm:flex items-center gap-4 text-xs text-ink-soft/50">
+        <span title="Max concurrent sessions">{grid.max_sessions} slot(s)</span>
+        <span>{fmtDate(grid.created_at)}</span>
+        {grid.notes && <span className="text-ink-soft/30 truncate max-w-[120px]">{grid.notes}</span>}
+      </div>
+
+      {/* Actions */}
+      <div className="flex items-center gap-1.5">
+        <Button variant="outline" size="sm" loading={checkLoading} onClick={onCheck}>
+          Check Health
+        </Button>
+        <Button variant="ghost" size="sm" onClick={onEdit}>
+          Edit
+        </Button>
+        <button
+          onClick={onDelete}
+          className="flex h-8 w-8 items-center justify-center rounded-lg text-ink-soft/30 transition-colors hover:bg-red-50 hover:text-red-500"
+          title={`Delete ${grid.name}`}
+          disabled={grid.id === 1}
+        >
+          <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+          </svg>
+        </button>
+      </div>
+    </div>
   )
 }

@@ -3,48 +3,54 @@ import clsx from 'clsx'
 import { useHealth } from '@/hooks/useHealth'
 
 const navItems = [
-  { to: '/', label: 'Dashboard' },
-  { to: '/accounts', label: 'Accounts' },
-  { to: '/tasks', label: 'Tasks' },
-  { to: '/grids', label: 'Grids' },
+  { to: '/', label: 'Dashboard', icon: '◉' },
+  { to: '/accounts', label: 'Accounts', icon: '◈' },
+  { to: '/tasks', label: 'Tasks', icon: '◎' },
+  { to: '/grids', label: 'Grids', icon: '◐' },
 ]
 
 export function Layout() {
   const { isError } = useHealth()
 
   return (
-    <div className="min-h-screen bg-[#f5f6fa]">
-      <header className="sticky top-0 z-50 flex items-center justify-between bg-ink px-8 py-3.5 text-white shadow-md">
-        <h1 className="flex items-center text-[1.3rem] font-semibold">
-          <NavLink to="/" className="text-white no-underline">
-            🍪 Cookie Pool
+    <div className="min-h-screen bg-gray-50">
+      {/* Top navigation */}
+      <header className="sticky top-0 z-50 border-b border-gray-200/80 bg-white/80 shadow-sm backdrop-blur-lg">
+        <div className="mx-auto flex h-14 max-w-6xl items-center justify-between px-5">
+          <NavLink to="/" className="flex items-center gap-2 text-ink no-underline">
+            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-indigo-50 text-sm">🍪</span>
+            <span className="text-[0.95rem] font-bold tracking-tight">Cookie Pool</span>
+            <span
+              title="API health"
+              className={clsx(
+                'inline-block h-1.5 w-1.5 rounded-full',
+                isError ? 'bg-red-500 shadow-[0_0_6px_#ef4444]' : 'bg-emerald-500 shadow-[0_0_6px_#22c55e]'
+              )}
+            />
           </NavLink>
-          <span
-            title="API health"
-            className={clsx(
-              'ml-2.5 inline-block h-2 w-2 rounded-full',
-              isError ? 'bg-red-400 shadow-[0_0_6px_#f87171]' : 'bg-emerald-400 shadow-[0_0_6px_#4ade80]'
-            )}
-          />
-        </h1>
-        <nav className="flex gap-1">
-          {navItems.map((item) => (
-            <NavLink
-              key={item.to}
-              to={item.to}
-              className={({ isActive }) =>
-                clsx(
-                  'rounded-md px-3.5 py-1.5 text-sm transition-colors',
-                  isActive ? 'bg-white/15 font-medium text-white' : 'text-white/65 hover:bg-white/10 hover:text-white'
-                )
-              }
-            >
-              {item.label}
-            </NavLink>
-          ))}
-        </nav>
+          <nav className="flex items-center gap-1">
+            {navItems.map((item) => (
+              <NavLink
+                key={item.to}
+                to={item.to}
+                end={item.to === '/'}
+                className={({ isActive }) =>
+                  clsx(
+                    'flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm transition-colors',
+                    isActive ? 'bg-indigo-50 font-medium text-brand' : 'text-ink-soft/70 hover:bg-gray-100 hover:text-ink'
+                  )
+                }
+              >
+                <span className="text-xs">{item.icon}</span>
+                {item.label}
+              </NavLink>
+            ))}
+          </nav>
+        </div>
       </header>
-      <main className="mx-auto max-w-6xl px-5 py-8">
+
+      {/* Page content */}
+      <main className="mx-auto max-w-6xl px-5 py-7">
         <Outlet />
       </main>
     </div>

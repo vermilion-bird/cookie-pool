@@ -2,26 +2,26 @@ import type { ReactNode } from 'react'
 
 export function Card({ children, className = '' }: { children: ReactNode; className?: string }) {
   return (
-    <div className={`mb-6 rounded-xl border border-gray-100 bg-white p-6 shadow-sm ${className}`}>
+    <div className={`rounded-xl border border-gray-100 bg-white shadow-card ${className}`}>
       {children}
     </div>
   )
 }
 
-export function CardHeader({
-  title,
-  subtitle,
-  action,
-}: {
-  title: string
-  subtitle?: string
-  action?: ReactNode
-}) {
+export function CardSection({ children, className = '' }: { children: ReactNode; className?: string }) {
   return (
-    <div className="mb-4 flex items-center justify-between">
-      <div>
-        <h2 className="text-[1.05rem] font-semibold text-ink">{title}</h2>
-        {subtitle && <div className="mt-0.5 text-xs text-gray-400">{subtitle}</div>}
+    <div className={`border-b border-gray-100 px-5 py-4 last:border-b-0 ${className}`}>
+      {children}
+    </div>
+  )
+}
+
+export function CardHeader({ title, subtitle, action, className = '' }: { title: string; subtitle?: string; action?: ReactNode; className?: string }) {
+  return (
+    <div className={`flex flex-wrap items-center justify-between gap-2 px-5 py-4 ${className}`}>
+      <div className="min-w-0 flex-1">
+        <h2 className="text-sm font-semibold text-ink">{title}</h2>
+        {subtitle && <p className="mt-0.5 text-[0.7rem] text-ink-soft/60">{subtitle}</p>}
       </div>
       {action}
     </div>

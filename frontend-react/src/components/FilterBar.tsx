@@ -10,20 +10,20 @@ export function FilterBar<T extends string>({
   onChange: (v: T) => void
 }) {
   return (
-    <div className="mb-4 flex flex-wrap items-center gap-2">
+    <div className="flex flex-wrap items-center gap-0.5 border-b border-gray-100 px-5">
       {options.map((opt) => (
-        <span
+        <button
           key={opt.value}
           onClick={() => onChange(opt.value)}
           className={clsx(
-            'cursor-pointer rounded-full border px-3.5 py-1.5 text-xs transition-colors',
+            'relative px-3 py-2.5 text-xs font-medium transition-colors',
             value === opt.value
-              ? 'border-ink bg-ink text-white'
-              : 'border-gray-200 bg-white text-ink-soft hover:bg-gray-50'
+              ? 'text-brand after:absolute after:inset-x-2 after:bottom-0 after:h-0.5 after:rounded-full after:bg-brand'
+              : 'text-ink-soft/60 hover:text-ink-soft'
           )}
         >
           {opt.label}
-        </span>
+        </button>
       ))}
     </div>
   )

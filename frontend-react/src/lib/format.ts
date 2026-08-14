@@ -10,3 +10,7 @@ export function fmtDate(iso: string | null): string {
   if (diffHr < 24) return `${diffHr}h ago`
   return d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 }
+
+export function timeAgo(iso: string | null): string {
+  return fmtDate(iso)
+}

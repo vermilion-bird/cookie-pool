@@ -1,19 +1,38 @@
-export function StatBox({
-  label,
-  value,
-  accent,
-}: {
+import clsx from 'clsx'
+
+interface StatBoxProps {
   label: string
   value: number | string
-  accent?: 'active' | 'inuse' | 'expired'
-}) {
-  const accentColor =
-    accent === 'active' ? 'before:bg-emerald-600' : accent === 'inuse' ? 'before:bg-blue-600' : accent === 'expired' ? 'before:bg-red-700' : 'before:bg-ink'
+  icon?: string
+  accent?: 'active' | 'inuse' | 'expired' | 'wait'
+}
+
+const accentConfig = {
+  active: { dot: 'bg-emerald-500', border: 'border-l-emerald-500', bg: 'from-emerald-50 to-white' },
+  inuse: { dot: 'bg-blue-500', border: 'border-l-blue-500', bg: 'from-blue-50 to-white' },
+  expired: { dot: 'bg-red-500', border: 'border-l-red-500', bg: 'from-red-50 to-white' },
+  wait: { dot: 'bg-amber-500', border: 'border-l-amber-500', bg: 'from-amber-50 to-white' },
+}
+
+export function StatBox({ label, value, icon, accent }: StatBoxProps) {
+  const cfg = accent ? accentConfig[accent] : null
 
   return (
-    <div className={`relative flex-1 min-w-[140px] overflow-hidden rounded-xl border border-gray-100 bg-white p-5 text-center shadow-sm before:absolute before:inset-x-0 before:top-0 before:h-[3px] ${accentColor}`}>
-      <div className="text-3xl font-bold text-ink">{value}</div>
-      <div className="mt-1 text-xs text-gray-400">{label}</div>
+    <div
+      className={clsx(
+        'relative flex min-w-[130px] flex-1 items-center gap-4 rounded-xl border border-gray-100 bg-white p-4 shadow-card',
+        cfg?.border && 'border-l-4',
+        cfg?.border
+      )}
+    >
+      {icon && <div className="text-2xl opacity-60">{icon}</div>}
+      <div className="flex-1">
+        <div className={clsx('text-2xl font-bold tracking-tight', accent === 'active' && 'text-emerald-700', accent === 'inuse' && 'text-blue-700', accent === 'expired' && 'text-red-700', accent === 'wait' && 'text-amber-700', !accent && 'text-ink')}>
+          {value}
+        </div>
+        <div className="mt-0.5 text-[0.7rem] font-medium uppercase tracking-wider text-ink-soft/60">{label}</div>
+      </div>
+      {cfg && <span className={clsx('h-1.5 w-1.5 rounded-full', cfg.dot)} />}
     </div>
   )
 }
