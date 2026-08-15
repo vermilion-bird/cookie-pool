@@ -60,13 +60,15 @@ async def api_key_middleware(request: Request, call_next):
 
 # 导入 API 路由
 from api.accounts import router as accounts_router
-from api.sessions import router as sessions_router
+from api.sessions import router as sessions_router_v1
+from api.sessions_v2 import router as sessions_router
 from api.tasks import router as tasks_router
 from api.grids import router as grids_router
 from api.schedules import router as schedules_router
 
 app.include_router(accounts_router, prefix="/api/accounts", tags=["accounts"])
-app.include_router(sessions_router, prefix="/api/sessions", tags=["sessions"])
+app.include_router(sessions_router_v1, prefix="/api/sessions", tags=["sessions"])
+app.include_router(sessions_router, prefix="/api", tags=["sessions-v2"])
 app.include_router(tasks_router, prefix="/api/tasks", tags=["tasks"])
 app.include_router(grids_router, prefix="/api/grids", tags=["grids"])
 app.include_router(schedules_router, prefix="/api/schedules", tags=["schedules"])

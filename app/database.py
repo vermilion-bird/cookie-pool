@@ -28,7 +28,7 @@ class Base(DeclarativeBase):
 
 def init_db():
     """Initialize database: create tables if not exist, run migrations."""
-    from models import GridInstance, Account, BrowserSession, Task  # noqa: F401 — register models
+    from models import GridInstance, Account, BrowserSession, Session, SessionAccount, Task  # noqa: F401
     Base.metadata.create_all(bind=engine)
 
     # ── Schema migrations ──

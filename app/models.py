@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from sqlalchemy import Boolean, Column, Integer, String, DateTime, Text, ForeignKey
+from sqlalchemy import Boolean, Column, Integer, String, DateTime, Text, ForeignKey, UniqueConstraint
 from sqlalchemy.orm import relationship
 
 from database import Base
@@ -147,6 +147,78 @@ class BrowserSession(Base):
             "status": self.status,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "closed_at": self.closed_at.isoformat() if self.closed_at else None,
+        }
+
+
+# ── 新版常驻 Session：一个 Chrome 浏览器承载多个不同平台的 Account ──
+
+class Session(Base):
+    """常驻浏览器会话。启动后保持 Chrome 存活，可绑定多个不同平台的 Account，
+    通过 noVNC 统一登录，按平台提取 cookie。"""
+
+    __tablename__ = "sessions_v2"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String(128), nullable=False, comment="Human label")
+    node_id = Column(Integer, ForeignKey("grid_instances.id"), nullable=False,
+                     comment="Chrome 运行在哪个 Grid 节点")
+    grid_session_id = Column(String(128), nullable=True, comment="Selenium Grid session id")
+    status = Column(String(32), nullable=False, default="IDLE",
+                   comment="IDLE|CREATING|READY|LOGIN|ACTIVE|CLOSED|FAILED")
+    profile_path = Column(String(512), nullable=False, comment="Chrome --user-data-dir")
+    novnc_url = Column(String(512), nullable=True)
+
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    closed_at = Column(DateTime, nullable=True)
+
+    node = relationship("GridInstance")
+    accounts = relationship("SessionAccount", back_populates="session",
+                            cascade="all, delete-orphan")
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "name": self.name,
+            "node_id": self.node_id,
+            "grid_session_id": self.grid_session_id,
+            "status": self.status,
+            "profile_path": self.profile_path,
+            "novnc_url": self.novnc_url,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "closed_at": self.closed_at.isoformat() if self.closed_at else None,
+            "accounts": [sa.to_dict() for sa in self.accounts] if self.accounts else [],
+        }
+
+
+class SessionAccount(Base):
+    """N:N join：Session 绑定的 Account，同一 Session 内同平台唯一。"""
+
+    __tablename__ = "session_accounts_v2"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    session_id = Column(Integer, ForeignKey("sessions_v2.id"), nullable=False)
+    account_id = Column(Integer, ForeignKey("accounts.id"), nullable=False)
+    platform = Column(String(128), nullable=False,
+                      comment="冗余字段：用于 UNIQUE 约束和快速查询")
+
+    bound_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+    session = relationship("Session", back_populates="accounts")
+    account = relationship("Account")
+
+    # 业务约束：同一 Session 同一 Platform 只能有一个 Account
+    __table_args__ = (
+        UniqueConstraint("session_id", "platform", name="uq_session_platform"),
+    )
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "session_id": self.session_id,
+            "account_id": self.account_id,
+            "platform": self.platform,
+            "bound_at": self.bound_at.isoformat() if self.bound_at else None,
+            "account": self.account.to_dict() if self.account else None,
         }
 
 
