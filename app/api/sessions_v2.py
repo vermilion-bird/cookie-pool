@@ -9,7 +9,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session as DBSession
 
 from database import get_db
-from models import Session, SessionAccount, Account, GridInstance
+from models import Session, SessionAccount, Account, GridInstance, BrowserSession
 from services.account_service import AccountService
 from services.grid_service import GridService
 from config import HOST_ADDRESS, NOVNC_PORT, PROFILES_DIR
