@@ -7,7 +7,6 @@ import { Badge } from '@/components/Badge'
 import { FilterBar } from '@/components/FilterBar'
 import { Modal } from '@/components/Modal'
 import { EmptyState, SkeletonCard } from '@/components/EmptyState'
-import { LoginModal } from '@/components/LoginModal'
 import { useToast } from '@/hooks/useToast'
 import { timeAgo } from '@/lib/format'
 import type { Account, AccountStatus } from '@/types'
@@ -43,24 +42,17 @@ export function Accounts() {
   const [showCreate, setShowCreate] = useState(false)
   const [editAccount, setEditAccount] = useState<Account | null>(null)
   const [editForm, setEditForm] = useState(emptyForm)
-  const [loginAccountId, setLoginAccountId] = useState<number | null>(null)
   const [sessionId, setSessionId] = useState<string>('')
   const [editingSessionId, setEditingSessionId] = useState<string>('')
 
-  const { data, isLoading } = useQuery({
-    queryKey: ['accounts'], queryFn: api.accounts.list,
-    refetchInterval: loginAccountId !== null ? false : 15000,
-  })
+  const { data, isLoading } = useQuery({ queryKey: ['accounts'], queryFn: api.accounts.list, refetchInterval: 15000 })
   const { data: gridData } = useQuery({ queryKey: ['grids'], queryFn: api.grids.list })
   const { data: sessionData } = useQuery({ queryKey: ['sessions'], queryFn: api.sessions.list })
 
   const accounts = data?.accounts ?? []
   const grids = gridData?.grids ?? []
   const sessions = sessionData?.sessions ?? []
-  const filtered = useMemo(
-    () => (filter === 'ALL' ? accounts : accounts.filter(a => a.status === filter)),
-    [accounts, filter],
-  )
+  const filtered = useMemo(() => filter === 'ALL' ? accounts : accounts.filter(a => a.status === filter), [accounts, filter])
 
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ['accounts'] })
@@ -70,19 +62,16 @@ export function Accounts() {
   const createMutation = useMutation({
     mutationFn: () =>
       api.accounts.create({
-        name: form.name.trim(), platform: form.platform.trim(),
-        notes: form.notes.trim(),
+        name: form.name.trim(), platform: form.platform.trim(), notes: form.notes.trim(),
         grid_id: form.gridId ? parseInt(form.gridId as string, 10) : null,
         login_indicator: form.loginIndicator.trim() || null,
       }),
     onSuccess: (data) => {
       const acc = data.account
-      toast(`Created "${acc.name}"${sessionId ? ', binding to session...' : ''}`, 'success')
+      toast(`Created "${acc.name}"`, 'success')
       setForm(emptyForm); setShowCreate(false)
       if (sessionId) {
-        api.sessions.bindAccount(parseInt(sessionId, 10), acc.id).then(() => {
-          toast(`Bound to session #${sessionId}`, 'success'); invalidate()
-        }).catch(() => toast('Created but bind failed — bind manually', 'error'))
+        api.sessions.bindAccount(parseInt(sessionId, 10), acc.id).then(() => { toast(`Bound to session #${sessionId}`, 'success'); invalidate() }).catch(() => toast('Created but bind failed — bind manually', 'error'))
       }
       invalidate()
     },
@@ -92,8 +81,7 @@ export function Accounts() {
   const updateMutation = useMutation({
     mutationFn: () =>
       api.accounts.update(editAccount!.id, {
-        name: editForm.name.trim(), platform: editForm.platform.trim(),
-        notes: editForm.notes.trim(),
+        name: editForm.name.trim(), platform: editForm.platform.trim(), notes: editForm.notes.trim(),
         grid_id: editForm.gridId ? parseInt(editForm.gridId as string, 10) : null,
         login_indicator: editForm.loginIndicator.trim() || null,
       }),
@@ -101,9 +89,7 @@ export function Accounts() {
       const accId = editAccount!.id
       toast('Account updated', 'success'); setEditAccount(null)
       if (editingSessionId) {
-        api.sessions.bindAccount(parseInt(editingSessionId, 10), accId).then(() => {
-          toast(`Bound to session #${editingSessionId}`, 'success'); invalidate()
-        }).catch(() => toast('Updated but bind failed — bind manually', 'error'))
+        api.sessions.bindAccount(parseInt(editingSessionId, 10), accId).then(() => { toast(`Bound to session #${editingSessionId}`, 'success'); invalidate() }).catch(() => toast('Updated but bind failed', 'error'))
       }
       invalidate()
     },
@@ -112,15 +98,12 @@ export function Accounts() {
 
   const deleteMutation = useMutation({
     mutationFn: (id: number) => api.accounts.remove(id),
-    onSuccess: (_, id) => {
-      toast(`Deleted "${accounts.find(a => a.id === id)?.name ?? id}"`, 'success'); invalidate()
-    },
+    onSuccess: (_, id) => { toast(`Deleted "${accounts.find(a => a.id === id)?.name ?? id}"`, 'success'); invalidate() },
     onError: (e: Error) => toast('Failed: ' + e.message, 'error'),
   })
 
   const bindMutation = useMutation({
-    mutationFn: ({ accId, sessId }: { accId: number; sessId: number }) =>
-      api.sessions.bindAccount(sessId, accId),
+    mutationFn: ({ accId, sessId }: { accId: number; sessId: number }) => api.sessions.bindAccount(sessId, accId),
     onSuccess: () => { toast('Bound to session', 'success'); invalidate() },
     onError: (e: Error) => toast('Bind failed: ' + e.message, 'error'),
   })
@@ -128,35 +111,17 @@ export function Accounts() {
   const importFileRef = useRef<HTMLInputElement>(null)
   const importMutation = useMutation({
     mutationFn: (file: File) => api.accounts.importCsv(file),
-    onSuccess: (data) => {
-      toast(`Imported ${data.created} account(s)`, 'success'); invalidate()
-    },
+    onSuccess: (data) => { toast(`Imported ${data.created} account(s)`, 'success'); invalidate() },
     onError: (e: Error) => toast('Import failed: ' + e.message, 'error'),
   })
 
-  function handleImportFile(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0]; if (file) importMutation.mutate(file); e.target.value = ''
-  }
-
-  function handleCreate() {
-    if (!form.name.trim() || !form.platform.trim()) { toast('Name and platform are required', 'error'); return }
-    createMutation.mutate()
-  }
-
-  function handleSaveEdit() {
-    if (!editForm.name.trim() || !editForm.platform.trim()) { toast('Name and platform are required', 'error'); return }
-    updateMutation.mutate()
-  }
-
-  function handleDelete(acc: Account) {
-    if (!confirm(`Delete "${acc.name}"?`)) return; deleteMutation.mutate(acc.id)
-  }
-
+  function handleCreate() { if (!form.name.trim() || !form.platform.trim()) { toast('Name and platform are required', 'error'); return }; createMutation.mutate() }
+  function handleSaveEdit() { if (!editForm.name.trim() || !editForm.platform.trim()) { toast('Name and platform are required', 'error'); return }; updateMutation.mutate() }
+  function handleDelete(acc: Account) { if (!confirm(`Delete "${acc.name}"?`)) return; deleteMutation.mutate(acc.id) }
   function openEdit(acc: Account) {
     setEditForm({ name: acc.name, platform: acc.platform, notes: acc.notes || '', gridId: acc.grid_id ?? '', loginIndicator: acc.login_indicator || '' })
     setEditAccount(acc); setEditingSessionId('')
   }
-
   function gridName(acc: Account): string {
     if (!acc.grid_id) return 'Default'
     return grids.find(g => g.id === acc.grid_id)?.name ?? `Grid #${acc.grid_id}`
@@ -165,48 +130,27 @@ export function Accounts() {
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="page-title">Accounts</h1>
-          <p className="page-subtitle">{accounts.length} account(s) · {sessions.length} session(s) · {filtered.length} showing</p>
-        </div>
+        <div><h1 className="page-title">Accounts</h1><p className="page-subtitle">{accounts.length} account(s) · {sessions.length} session(s) · {filtered.length} showing</p></div>
         <div className="flex items-center gap-2">
           <Button variant="outline" loading={importMutation.isPending} onClick={() => importFileRef.current?.click()}>⬆ Import CSV</Button>
-          <input ref={importFileRef} type="file" accept=".csv,text/csv" className="hidden" onChange={handleImportFile} />
+          <input ref={importFileRef} type="file" accept=".csv,text/csv" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) importMutation.mutate(f); e.target.value = '' }} />
           <Button variant="success" onClick={() => setShowCreate(!showCreate)}>{showCreate ? 'Cancel' : '+ New Account'}</Button>
         </div>
       </div>
 
       {showCreate && (
         <Card>
-          <CardHeader title="New Account" subtitle="Register a platform account. Optionally bind to a Session for multi-platform login." />
+          <CardHeader title="New Account" subtitle="Define a platform account, then bind it to a Session for login." />
           <CardSection>
             <div className="flex flex-wrap items-end gap-3">
-              <div className="min-w-[120px] flex-1">
-                <label className="mb-1 block text-xs font-semibold text-ink-soft/50 uppercase tracking-wider">Name</label>
-                <input className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm" placeholder="tiktok_ads_01"
-                  value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} onKeyDown={e => e.key === 'Enter' && handleCreate()} />
-              </div>
-              <div className="min-w-[120px] flex-1">
-                <label className="mb-1 block text-xs font-semibold text-ink-soft/50 uppercase tracking-wider">Platform</label>
-                <input className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm" placeholder="ads.tiktok.com"
-                  value={form.platform} onChange={e => setForm({ ...form, platform: e.target.value })} onKeyDown={e => e.key === 'Enter' && handleCreate()} />
-              </div>
-              <div className="min-w-[110px] flex-1">
-                <label className="mb-1 block text-xs font-semibold text-ink-soft/50 uppercase tracking-wider">Grid</label>
-                <select className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm" value={form.gridId}
-                  onChange={e => setForm({ ...form, gridId: e.target.value })}>
-                  <option value="">Default</option>
-                  {grids.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
-                </select>
-              </div>
-              <div className="min-w-[130px] flex-1">
-                <label className="mb-1 block text-xs font-semibold text-ink-soft/50 uppercase tracking-wider">Bind to Session</label>
-                <select className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm" value={sessionId}
-                  onChange={e => setSessionId(e.target.value)}>
-                  <option value="">None</option>
-                  {sessions.map(s => <option key={s.id} value={s.id}>{s.name} ({s.accounts?.length || 0} accts)</option>)}
-                </select>
-              </div>
+              <div className="min-w-[120px] flex-1"><label className="mb-1 block text-xs font-semibold text-ink-soft/50 uppercase tracking-wider">Name</label>
+                <input className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm" placeholder="tiktok_ads_01" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} onKeyDown={e => e.key === 'Enter' && handleCreate()} /></div>
+              <div className="min-w-[120px] flex-1"><label className="mb-1 block text-xs font-semibold text-ink-soft/50 uppercase tracking-wider">Platform</label>
+                <input className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm" placeholder="ads.tiktok.com" value={form.platform} onChange={e => setForm({ ...form, platform: e.target.value })} onKeyDown={e => e.key === 'Enter' && handleCreate()} /></div>
+              <div className="min-w-[110px] flex-1"><label className="mb-1 block text-xs font-semibold text-ink-soft/50 uppercase tracking-wider">Grid</label>
+                <select className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm" value={form.gridId} onChange={e => setForm({ ...form, gridId: e.target.value })}><option value="">Default</option>{grids.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}</select></div>
+              <div className="min-w-[130px] flex-1"><label className="mb-1 block text-xs font-semibold text-ink-soft/50 uppercase tracking-wider">Bind to Session</label>
+                <select className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm" value={sessionId} onChange={e => setSessionId(e.target.value)}><option value="">None</option>{sessions.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select></div>
               <Button variant="success" loading={createMutation.isPending} onClick={handleCreate}>Create</Button>
             </div>
           </CardSection>
@@ -215,51 +159,35 @@ export function Accounts() {
 
       <Card>
         <FilterBar options={filterOptions} value={filter} onChange={setFilter} />
-        {isLoading ? (
-          <div className="space-y-2 p-5">{[1, 2, 3].map(i => <SkeletonCard key={i} />)}</div>
-        ) : filtered.length === 0 ? (
-          <EmptyState icon="🍪" message={accounts.length === 0 ? 'No accounts yet.' : 'No accounts match this filter.'} />
-        ) : (
-          <div className="divide-y divide-gray-100">
+        {isLoading ? <div className="space-y-2 p-5">{[1, 2, 3].map(i => <SkeletonCard key={i} />)}</div>
+        : filtered.length === 0 ? <EmptyState icon="🍪" message={accounts.length === 0 ? 'No accounts yet.' : 'No accounts match this filter.'} />
+        : <div className="divide-y divide-gray-100">
             {filtered.map(acc => (
-              <AccountItem key={acc.id} account={acc} icon={getIcon(acc.platform)}
-                gridName={gridName(acc)} sessions={sessions}
-                onLogin={() => setLoginAccountId(acc.id)}
-                onEdit={() => openEdit(acc)} onDelete={() => handleDelete(acc)}
+              <AccountItem key={acc.id} account={acc} icon={getIcon(acc.platform)} gridName={gridName(acc)}
+                sessions={sessions} onEdit={() => openEdit(acc)} onDelete={() => handleDelete(acc)}
                 onBind={(sessId) => bindMutation.mutate({ accId: acc.id, sessId })} />
             ))}
-          </div>
-        )}
+          </div>}
       </Card>
 
       {editAccount && (
         <Modal open title={`Edit Account #${editAccount.id}`} onClose={() => setEditAccount(null)}
           footer={<><Button variant="primary" loading={updateMutation.isPending} onClick={handleSaveEdit}>Save</Button><Button variant="outline" onClick={() => setEditAccount(null)}>Cancel</Button></>}>
           <div className="space-y-4">
-            <div><label className="mb-1.5 block text-xs font-semibold text-ink-soft/50 uppercase tracking-wider">Name</label>
-              <input className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm" value={editForm.name} onChange={e => setEditForm({ ...editForm, name: e.target.value })} /></div>
-            <div><label className="mb-1.5 block text-xs font-semibold text-ink-soft/50 uppercase tracking-wider">Platform</label>
-              <input className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm" value={editForm.platform} onChange={e => setEditForm({ ...editForm, platform: e.target.value })} /></div>
-            <div><label className="mb-1.5 block text-xs font-semibold text-ink-soft/50 uppercase tracking-wider">Grid</label>
-              <select className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm" value={editForm.gridId} onChange={e => setEditForm({ ...editForm, gridId: e.target.value })}>
-                <option value="">Default</option>
-                {grids.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}</select></div>
-            <div><label className="mb-1.5 block text-xs font-semibold text-ink-soft/50 uppercase tracking-wider">Bind to Session</label>
-              <select className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm" value={editingSessionId} onChange={e => setEditingSessionId(e.target.value)}>
-                <option value="">None</option>
-                {sessions.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select></div>
+            <div><label className="mb-1.5 block text-xs font-semibold text-ink-soft/50 uppercase tracking-wider">Name</label><input className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm" value={editForm.name} onChange={e => setEditForm({ ...editForm, name: e.target.value })} /></div>
+            <div><label className="mb-1.5 block text-xs font-semibold text-ink-soft/50 uppercase tracking-wider">Platform</label><input className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm" value={editForm.platform} onChange={e => setEditForm({ ...editForm, platform: e.target.value })} /></div>
+            <div><label className="mb-1.5 block text-xs font-semibold text-ink-soft/50 uppercase tracking-wider">Grid</label><select className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm" value={editForm.gridId} onChange={e => setEditForm({ ...editForm, gridId: e.target.value })}><option value="">Default</option>{grids.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}</select></div>
+            <div><label className="mb-1.5 block text-xs font-semibold text-ink-soft/50 uppercase tracking-wider">Bind to Session</label><select className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm" value={editingSessionId} onChange={e => setEditingSessionId(e.target.value)}><option value="">None</option>{sessions.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select></div>
           </div>
         </Modal>
       )}
-
-      {loginAccountId !== null && <LoginModal accountId={loginAccountId} onClose={() => setLoginAccountId(null)} />}
     </div>
   )
 }
 
-function AccountItem({ account, icon, gridName, sessions, onLogin, onEdit, onDelete, onBind }: {
+function AccountItem({ account, icon, gridName, sessions, onEdit, onDelete, onBind }: {
   account: Account; icon: string; gridName: string; sessions: { id: number; name: string }[];
-  onLogin: () => void; onEdit: () => void; onDelete: () => void; onBind: (sessId: number) => void;
+  onEdit: () => void; onDelete: () => void; onBind: (sessId: number) => void;
 }) {
   const last = account.last_login_at || account.last_used_at
   const [showBind, setShowBind] = useState(false)
@@ -269,36 +197,24 @@ function AccountItem({ account, icon, gridName, sessions, onLogin, onEdit, onDel
     <div className="flex flex-wrap items-center gap-4 px-5 py-4 transition-colors hover:bg-gray-50/70 sm:gap-6">
       <div className="flex items-center gap-3 min-w-0 flex-[2]">
         <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-gray-100 text-base">{icon}</span>
-        <div className="min-w-0">
-          <div className="text-sm font-semibold text-ink truncate">{account.name}</div>
-          <div className="text-xs text-ink-soft/50">{account.platform}</div>
-        </div>
+        <div className="min-w-0"><div className="text-sm font-semibold text-ink truncate">{account.name}</div><div className="text-xs text-ink-soft/50">{account.platform}</div></div>
       </div>
-      <div className="flex items-center gap-3">
-        <Badge status={account.status} />
-        <span className="text-xs text-ink-soft/40 font-mono">{gridName}</span>
-      </div>
+      <div className="flex items-center gap-3"><Badge status={account.status} /><span className="text-xs text-ink-soft/40 font-mono">{gridName}</span></div>
       <div className="hidden text-xs text-ink-soft/40 lg:block">{last ? `Last: ${timeAgo(last)}` : 'Never used'}</div>
       <div className="flex items-center gap-1.5">
-        <Button variant="success" size="sm" disabled={account.status === 'IN_USE'} onClick={onLogin}>Login</Button>
-        <Button variant="ghost" size="sm" onClick={onEdit}>Edit</Button>
         {showBind ? (
           <span className="flex items-center gap-1">
-            <select className="rounded border border-gray-200 px-1 py-0.5 text-xs" value={selSess}
-              onChange={e => setSelSess(e.target.value)}>
-              <option value="">Session...</option>
-              {sessions.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-            </select>
+            <select className="rounded border border-gray-200 px-1 py-0.5 text-xs" value={selSess} onChange={e => setSelSess(e.target.value)}>
+              <option value="">Session...</option>{sessions.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select>
             <button className="text-xs text-brand font-medium" onClick={() => { if (selSess) { onBind(parseInt(selSess, 10)); setShowBind(false) } }}>✓</button>
             <button className="text-xs text-gray-400" onClick={() => setShowBind(false)}>✕</button>
           </span>
         ) : (
           <Button variant="outline" size="sm" onClick={() => setShowBind(true)}>+Session</Button>
         )}
+        <Button variant="ghost" size="sm" onClick={onEdit}>Edit</Button>
         <button onClick={onDelete} className="flex h-8 w-8 items-center justify-center rounded-lg text-ink-soft/30 transition-colors hover:bg-red-50 hover:text-red-500" title="Delete">
-          <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-          </svg>
+          <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
         </button>
       </div>
     </div>
