@@ -1,0 +1,121 @@
+# ============================================================
+# Cookie Pool — 多节点集群模式
+# Hub + 3 Node，每个 Node 绑定专属账号
+# ============================================================
+# 启动: docker compose -f docker-compose.cluster.yml up -d --build
+# 单节点: 只启动 app + hub + node-1
+
+services:
+  # ── FastAPI 后端 + React SPA ──
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: cp-app
+    ports:
+      - "${APP_PORT:-8080}:8080"
+    environment:
+      - GRID_URL=http://hub:4444          # 默认走 hub，未绑定 grid_id 的账号用
+      - DATA_DIR=/data
+      - API_KEY=${API_KEY:-change-me}
+      - HOST_ADDRESS=${HOST_ADDRESS:-127.0.0.1}
+      - NOVNC_PORT=7901                   # 默认 noVNC（未绑定 grid 的账号用 node-1）
+    volumes:
+      - ${DATA_DIR:-./data}:/data
+    depends_on:
+      hub:
+        condition: service_started
+    restart: unless-stopped
+    networks:
+      - cp-network
+
+  # ── Hub：会话路由中枢 ──
+  hub:
+    image: selenium/hub:latest
+    container_name: cp-hub
+    environment:
+      - SE_SESSION_REQUEST_TIMEOUT=300
+    restart: unless-stopped
+    networks:
+      - cp-network
+
+  # ── Node 1：账号 A ──
+  node-1:
+    image: selenium/node-chromium:latest
+    container_name: cp-node-1
+    shm_size: "2gb"
+    depends_on:
+      - hub
+    environment:
+      - SE_EVENT_BUS_HOST=hub
+      - SE_EVENT_BUS_PUBLISH_PORT=4442
+      - SE_EVENT_BUS_SUBSCRIBE_PORT=4443
+      - SE_NODE_MAX_SESSIONS=1
+      - SE_NODE_SESSION_TIMEOUT=300
+      - SE_START_XVFB=true
+      - SE_START_VNC=true
+      - SE_START_NO_VNC=true
+      - SE_VNC_PASSWORD=${VNC_PASSWORD:-}
+    volumes:
+      - ${DATA_DIR:-./data}/profiles/node-1:/data/profiles
+    ports:
+      - "7901:7900"
+    restart: unless-stopped
+    networks:
+      - cp-network
+
+  # ── Node 2：账号 B ──
+  node-2:
+    image: selenium/node-chromium:latest
+    container_name: cp-node-2
+    shm_size: "2gb"
+    depends_on:
+      - hub
+    environment:
+      - SE_EVENT_BUS_HOST=hub
+      - SE_EVENT_BUS_PUBLISH_PORT=4442
+      - SE_EVENT_BUS_SUBSCRIBE_PORT=4443
+      - SE_NODE_MAX_SESSIONS=1
+      - SE_NODE_SESSION_TIMEOUT=300
+      - SE_START_XVFB=true
+      - SE_START_VNC=true
+      - SE_START_NO_VNC=true
+      - SE_VNC_PASSWORD=${VNC_PASSWORD:-}
+    volumes:
+      - ${DATA_DIR:-./data}/profiles/node-2:/data/profiles
+    ports:
+      - "7902:7900"
+    restart: unless-stopped
+    networks:
+      - cp-network
+    # 按需启停: profiles: ["node-2"]
+
+  # ── Node 3：账号 C ──
+  node-3:
+    image: selenium/node-chromium:latest
+    container_name: cp-node-3
+    shm_size: "2gb"
+    depends_on:
+      - hub
+    environment:
+      - SE_EVENT_BUS_HOST=hub
+      - SE_EVENT_BUS_PUBLISH_PORT=4442
+      - SE_EVENT_BUS_SUBSCRIBE_PORT=4443
+      - SE_NODE_MAX_SESSIONS=1
+      - SE_NODE_SESSION_TIMEOUT=300
+      - SE_START_XVFB=true
+      - SE_START_VNC=true
+      - SE_START_NO_VNC=true
+      - SE_VNC_PASSWORD=${VNC_PASSWORD:-}
+    volumes:
+      - ${DATA_DIR:-./data}/profiles/node-3:/data/profiles
+    ports:
+      - "7903:7900"
+    restart: unless-stopped
+    networks:
+      - cp-network
+    profiles: ["full"]   # 默认不启动，加 --profile full 启用
+
+networks:
+  cp-network:
+    driver: bridge
