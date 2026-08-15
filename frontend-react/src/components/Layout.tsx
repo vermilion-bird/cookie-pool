@@ -10,6 +10,7 @@ const navItems = [
   { to: '/tasks', label: 'Tasks', icon: '◎' },
   { to: '/grids', label: 'Grids', icon: '◐' },
   { to: '/schedules', label: 'Schedules', icon: '⏰' },
+  { to: '/sessions', label: 'Sessions', icon: '🖥️' },
 ]
 
 export function Layout() {

@@ -6,6 +6,7 @@ import { Accounts } from '@/pages/Accounts'
 import { Tasks } from '@/pages/Tasks'
 import { Grids } from '@/pages/Grids'
 import { Schedules } from '@/pages/Schedules'
+import { Sessions } from '@/pages/Sessions'
 import { ToastProvider } from '@/hooks/useToast'
 
 const router = createBrowserRouter([
@@ -18,6 +19,7 @@ const router = createBrowserRouter([
       { path: 'tasks', element: <Tasks /> },
       { path: 'grids', element: <Grids /> },
       { path: 'schedules', element: <Schedules /> },
+      { path: 'sessions', element: <Sessions /> },
     ],
   },
 ])
