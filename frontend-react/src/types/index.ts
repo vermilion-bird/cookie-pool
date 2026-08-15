@@ -114,3 +114,29 @@ export interface GridCheckResult {
   nodes: number
   ready: boolean
 }
+
+// ── Session v2 ──
+
+export interface SessionV2Account {
+  id: number
+  session_id: number
+  account_id: number
+  platform: string
+  bound_at: string | null
+  account: Account
+}
+
+export type SessionV2Status = 'IDLE' | 'CREATING' | 'READY' | 'LOGIN' | 'ACTIVE' | 'CLOSED' | 'FAILED'
+
+export interface SessionV2 {
+  id: number
+  name: string
+  node_id: number
+  grid_session_id: string | null
+  status: SessionV2Status
+  profile_path: string
+  novnc_url: string | null
+  created_at: string | null
+  closed_at: string | null
+  accounts: SessionV2Account[]
+}

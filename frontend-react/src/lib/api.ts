@@ -1,6 +1,7 @@
 import type {
   Account, Task, Schedule, TaskTypeMeta,
   LoginStartResponse, LoginCompleteResponse, GridInstance, GridCheckResult,
+  SessionV2, SessionV2Account,
 } from '@/types'
 
 const API_KEY_STORAGE = 'cp_api_key'
@@ -130,5 +131,23 @@ export const api = {
       }),
     remove: (id: number) => request<{ status: string }>(`/api/schedules/${id}`, { method: 'DELETE' }),
     trigger: (id: number) => request<{ triggered: number; schedule: Schedule }>(`/api/schedules/${id}/trigger`, { method: 'POST' }),
+  },
+
+  sessions: {
+    list: () => request<{ sessions: SessionV2[] }>('/api/sessions'),
+    get: (id: number) => request<{ session: SessionV2 }>(`/api/sessions/${id}`),
+    create: (payload: { name: string; node_id: number }) =>
+      request<{ session: SessionV2 }>('/api/sessions', { method: 'POST', body: JSON.stringify(payload) }),
+    remove: (id: number) => request<{ status: string }>(`/api/sessions/${id}`, { method: 'DELETE' }),
+    bindAccount: (sessionId: number, accountId: number) =>
+      request<{ session_account: SessionV2Account }>(`/api/sessions/${sessionId}/accounts`, {
+        method: 'POST', body: JSON.stringify({ account_id: accountId }),
+      }),
+    unbindAccount: (sessionId: number, accountId: number) =>
+      request<{ status: string }>(`/api/sessions/${sessionId}/accounts/${accountId}`, { method: 'DELETE' }),
+    startLogin: (id: number) =>
+      request<{ session: SessionV2; novnc_url: string; message: string }>(`/api/sessions/${id}/login`, { method: 'POST' }),
+    completeLogin: (id: number) =>
+      request<{ status: string; message: string }>(`/api/sessions/${id}/login/complete`, { method: 'POST' }),
   },
 }
