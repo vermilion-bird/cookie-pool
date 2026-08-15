@@ -244,29 +244,29 @@ class GridService:
     def probe(grid_url: str) -> dict:
         """
         探测 Grid 实例是否健康。
+        Hub 用 /wd/hub/status，Node/Standalone 用 /status，自动回退。
         返回 {"status": "ONLINE"|"OFFLINE"|"ERROR", "nodes": int, "ready": bool, "message": str}
         """
         import urllib.request
         import json
-        try:
-            status_url = f"{grid_url}/wd/hub/status"
-            resp = urllib.request.urlopen(status_url, timeout=10)
-            if resp.status != 200:
-                return {"status": "ERROR", "nodes": 0, "ready": False,
-                        "message": f"HTTP {resp.status}"}
-
-            data = json.loads(resp.read().decode())
-            value = data.get("value", {})
-            ready = value.get("ready", False)
-            nodes = value.get("value", {}).get("nodes", [])
-            node_count = len(nodes) if isinstance(nodes, list) else 0
-
-            if ready:
-                return {"status": "ONLINE", "nodes": node_count, "ready": True,
-                        "message": "Ready"}
-            else:
-                return {"status": "ERROR", "nodes": node_count, "ready": False,
-                        "message": "Grid not ready"}
-        except Exception as e:
-            return {"status": "OFFLINE", "nodes": 0, "ready": False,
-                    "message": str(e)}
+        for endpoint in ("/wd/hub/status", "/status"):
+            try:
+                status_url = f"{grid_url}{endpoint}"
+                resp = urllib.request.urlopen(status_url, timeout=10)
+                if resp.status != 200:
+                    continue
+                data = json.loads(resp.read().decode())
+                value = data.get("value", {})
+                ready = value.get("ready", False)
+                nodes_list = value.get("value", {}).get("nodes", [])
+                node_count = len(nodes_list) if isinstance(nodes_list, list) else 0
+                if ready:
+                    return {"status": "ONLINE", "nodes": node_count, "ready": True,
+                            "message": "Ready"}
+                else:
+                    return {"status": "ERROR", "nodes": node_count, "ready": False,
+                            "message": "Grid not ready"}
+            except Exception:
+                continue
+        return {"status": "OFFLINE", "nodes": 0, "ready": False,
+                "message": "No status endpoint reachable"}
