@@ -190,8 +190,6 @@ function AccountItem({ account, icon, gridName, sessions, onEdit, onDelete, onBi
   onEdit: () => void; onDelete: () => void; onBind: (sessId: number) => void;
 }) {
   const last = account.last_login_at || account.last_used_at
-  const [showBind, setShowBind] = useState(false)
-  const [selSess, setSelSess] = useState<string>('')
 
   return (
     <div className="flex flex-wrap items-center gap-4 px-5 py-4 transition-colors hover:bg-gray-50/70 sm:gap-6">
@@ -202,16 +200,10 @@ function AccountItem({ account, icon, gridName, sessions, onEdit, onDelete, onBi
       <div className="flex items-center gap-3"><Badge status={account.status} /><span className="text-xs text-ink-soft/40 font-mono">{gridName}</span></div>
       <div className="hidden text-xs text-ink-soft/40 lg:block">{last ? `Last: ${timeAgo(last)}` : 'Never used'}</div>
       <div className="flex items-center gap-1.5">
-        {showBind ? (
-          <span className="flex items-center gap-1">
-            <select className="rounded border border-gray-200 px-1 py-0.5 text-xs" value={selSess} onChange={e => setSelSess(e.target.value)}>
-              <option value="">Session...</option>{sessions.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select>
-            <button className="text-xs text-brand font-medium" onClick={() => { if (selSess) { onBind(parseInt(selSess, 10)); setShowBind(false) } }}>✓</button>
-            <button className="text-xs text-gray-400" onClick={() => setShowBind(false)}>✕</button>
-          </span>
-        ) : (
-          <Button variant="outline" size="sm" onClick={() => setShowBind(true)}>+Session</Button>
-        )}
+        <select className="rounded-lg border border-gray-200 px-2 py-1.5 text-xs text-ink-soft/70"
+          defaultValue="" onChange={e => { if (e.target.value) onBind(parseInt(e.target.value, 10)) }}>
+          <option value="">+Session</option>
+          {sessions.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select>
         <Button variant="ghost" size="sm" onClick={onEdit}>Edit</Button>
         <button onClick={onDelete} className="flex h-8 w-8 items-center justify-center rounded-lg text-ink-soft/30 transition-colors hover:bg-red-50 hover:text-red-500" title="Delete">
           <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
