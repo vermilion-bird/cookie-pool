@@ -1,4 +1,5 @@
 import logging
+import random
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.remote.webdriver import WebDriver
@@ -7,6 +8,89 @@ from selenium.common.exceptions import WebDriverException
 from config import GRID_URL
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Realistic User-Agent pool — rotated per session to avoid fingerprinting
+# ---------------------------------------------------------------------------
+_USER_AGENTS = [
+    # Windows 10 / Chrome 130+
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36",
+    # macOS / Chrome 130+
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+    # Windows 11 / Edge (Chromium)
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36 Edg/130.0.0.0",
+]
+
+# ---------------------------------------------------------------------------
+# CDP script injected into every page to override WebDriver detection markers.
+# Runs before any page JS, so navigator.webdriver is patched before site scripts see it.
+# ---------------------------------------------------------------------------
+_CDP_OVERRIDE_SCRIPT = """
+(function() {
+    'use strict';
+    // ── 1. Hide webdriver flag ──
+    Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+
+    // ── 2. Fake plugins ──
+    Object.defineProperty(navigator, 'plugins', {
+        get: () => {
+            const arr = [
+                { name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
+                { name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai', description: '' },
+                { name: 'Native Client', filename: 'internal-nacl-plugin', description: '' },
+            ];
+            arr.item = (i) => arr[i] || null;
+            arr.namedItem = (n) => arr.find(p => p.name === n) || null;
+            arr.refresh = () => {};
+            Object.setPrototypeOf(arr, PluginArray.prototype);
+            return arr;
+        }
+    });
+
+    // ── 3. Fake languages ──
+    Object.defineProperty(navigator, 'languages', { get: () => ['zh-CN', 'zh', 'en'] });
+
+    // ── 4. Fake chrome object ──
+    window.chrome = {
+        runtime: { connect: () => {}, onConnect: { addListener: () => {} } },
+        loadTimes: () => {},
+        csi: () => {},
+        app: { isInstalled: false, InstallState: { DISABLED: 'disabled', INSTALLED: 'installed', NOT_INSTALLED: 'not_installed' }, RunningState: { CANNOT_RUN: 'cannot_run', READY_TO_RUN: 'ready_to_run', RUNNING: 'running' } },
+    };
+
+    // ── 5. Fake permissions.query ──
+    const _query = window.navigator.permissions.query;
+    window.navigator.permissions.query = (params) => {
+        if (params && params.name === 'notifications') {
+            return Promise.resolve({ state: Notification.permission, onchange: null });
+        }
+        return _query.call(window.navigator.permissions, params);
+    };
+
+    // ── 6. Fake hardware concurrency ──
+    Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 8 });
+
+    // ── 7. Fake WebGL vendor ──
+    try {
+        const proto = WebGLRenderingContext.prototype;
+        const getParam = proto.getParameter;
+        proto.getParameter = function(p) {
+            if (p === 37445) return 'Google Inc. (Intel)';       // UNMASKED_VENDOR_WEBGL
+            if (p === 37446) return 'ANGLE (Intel, Intel(R) Iris(R) Xe Graphics (0x000046A8) Direct3D11 vs_5_0 ps_5_0, D3D11)';  // UNMASKED_RENDERER_WEBGL
+            return getParam.call(this, p);
+        };
+    } catch(e) {}
+
+    // ── 8. Remove "enable-automation" info bar side-effects ──
+    delete document.__webdriver_evaluate;
+    delete document.__webdriver_script_function;
+    delete document.__webdriver_script_func;
+    delete document.__webdriver_script_fn;
+})();
+"""
 
 
 class GridService:
@@ -21,25 +105,47 @@ class GridService:
 
     @staticmethod
     def create_driver(profile_path: str, grid_url: str = None) -> WebDriver:
-        """在指定 Grid 上创建一个新 Chrome session，加载指定 Profile。"""
+        """在指定 Grid 上创建一个新 Chrome session（包含反检测配置），加载指定 Profile。"""
         effective_url = grid_url or GRID_URL
 
         chrome_options = Options()
 
+        # ── Profile & display ──
         chrome_options.add_argument(f"--user-data-dir={profile_path}")
-        chrome_options.add_argument("--no-first-run")
-        chrome_options.add_argument("--disable-search-engine-choice-screen")
-        chrome_options.add_argument("--disable-blink-features=AutomationControlled")
 
+        # ── Anti-automation flags ──
+        chrome_options.add_argument("--disable-blink-features=AutomationControlled")
+        chrome_options.add_argument("--disable-automation")
+        chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
+        chrome_options.add_experimental_option("useAutomationExtension", False)
+
+        # ── Misc ──
+        chrome_options.add_argument("--no-first-run")
+        chrome_options.add_argument("--no-default-browser-check")
+        chrome_options.add_argument("--disable-search-engine-choice-screen")
+        chrome_options.add_argument("--disable-background-networking")
+        chrome_options.add_argument("--disable-sync")
+        chrome_options.add_argument("--disable-default-apps")
+        chrome_options.add_argument("--disable-extensions")
+        chrome_options.add_argument("--disable-popup-blocking")
+        chrome_options.add_argument("--disable-prompt-on-repost")
+
+        # ── Container / headless-server safety ──
         chrome_options.add_argument("--disable-dev-shm-usage")
         chrome_options.add_argument("--disable-gpu")
         chrome_options.add_argument("--no-sandbox")
         chrome_options.add_argument("--remote-allow-origins=*")
 
+        # ── Language ──
         chrome_options.add_argument("--lang=zh-CN")
         chrome_options.add_experimental_option("prefs", {
             "intl.accept_languages": "zh-CN,zh",
         })
+
+        # ── Realistic random User-Agent ──
+        ua = random.choice(_USER_AGENTS)
+        chrome_options.add_argument(f"--user-agent={ua}")
+        logger.debug(f"Using UA: {ua}")
 
         driver = webdriver.Remote(
             command_executor=f"{effective_url}/wd/hub",
@@ -47,6 +153,16 @@ class GridService:
         )
         driver.implicitly_wait(10)
         logger.info(f"Grid session created ({effective_url}): {driver.session_id}")
+
+        # ── CDP injection: override JS detection markers before every page load ──
+        try:
+            driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
+                "source": _CDP_OVERRIDE_SCRIPT,
+            })
+            logger.debug("CDP anti-detection script injected")
+        except Exception as e:
+            logger.warning(f"CDP injection failed (non-fatal): {e}")
+
         return driver
 
     @staticmethod

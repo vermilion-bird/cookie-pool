@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel
+from selenium.webdriver.remote.webdriver import WebDriver
 from sqlalchemy.orm import Session
 
 from database import get_db
@@ -17,6 +18,21 @@ router = APIRouter()
 grid_service = GridService()
 
 LOGIN_KEYWORDS = ["login", "signin", "auth", "sign_in", "log_in"]
+
+# ---------------------------------------------------------------------------
+# Login-session driver cache
+# Keep the WebDriver alive while the user logs in through noVNC.
+# Without this the driver goes out of scope after start_login() returns,
+# its __del__ calls quit(), and the Grid browser disappears instantly.
+# ---------------------------------------------------------------------------
+_login_drivers: dict[int, WebDriver] = {}
+
+def _close_login_driver(account_id: int) -> None:
+    """Close and forget the login-session driver for *account_id*, if any."""
+    driver = _login_drivers.pop(account_id, None)
+    if driver is not None:
+        GridService.close_driver(driver)
+        logger.info(f"Login driver closed for account {account_id}")
 
 
 class AccountCreate(BaseModel):
@@ -176,7 +192,21 @@ def start_login(account_id: int, db: Session = Depends(get_db)):
     if account.status == "IN_USE":
         raise HTTPException(status_code=409, detail="Account is in use")
 
-    # Close stale login sessions
+    # Reuse existing LOGIN session if its driver is still alive
+    existing_session = db.query(BrowserSession).filter(
+        BrowserSession.account_id == account_id,
+        BrowserSession.status == "LOGIN",
+    ).order_by(BrowserSession.id.desc()).first()
+
+    if existing_session and account_id in _login_drivers:
+        logger.info(f"Reusing existing login session {existing_session.id} for account {account_id}")
+        return {
+            "session": existing_session.to_dict(),
+            "novnc_url": existing_session.novnc_url,
+            "instructions": "Browser already open. Log in to the target platform, then click 'Complete'.",
+        }
+
+    # Close stale login sessions — also kill any orphaned driver
     old_sessions = db.query(BrowserSession).filter(
         BrowserSession.account_id == account_id,
         BrowserSession.status.in_(["CREATING", "READY", "LOGIN"]),
@@ -184,6 +214,7 @@ def start_login(account_id: int, db: Session = Depends(get_db)):
     for s in old_sessions:
         s.status = "CLOSED"
         s.closed_at = datetime.now(timezone.utc)
+    _close_login_driver(account_id)
     db.commit()
 
     session = BrowserSession(account_id=account_id, status="CREATING")
@@ -196,6 +227,10 @@ def start_login(account_id: int, db: Session = Depends(get_db)):
         browser = BrowserService(account, grid_service)
         browser.create_session(grid_url=grid_url)
 
+        # Persist the driver so it survives after this function returns —
+        # otherwise the WebDriver.__del__ calls quit() and kills the browser.
+        _login_drivers[account_id] = browser.driver
+
         session.grid_session_id = browser.driver.session_id
         session.status = "READY"
         session.novnc_url = _resolve_novnc_url(account)
@@ -203,6 +238,7 @@ def start_login(account_id: int, db: Session = Depends(get_db)):
         db.commit()
         logger.info(f"Login session {session.id} created for account {account_id} (grid_url={grid_url})")
     except Exception as e:
+        _close_login_driver(account_id)
         session.status = "FAILED"
         session.closed_at = datetime.now(timezone.utc)
         db.commit()
@@ -212,7 +248,7 @@ def start_login(account_id: int, db: Session = Depends(get_db)):
     return {
         "session": session.to_dict(),
         "novnc_url": session.novnc_url,
-        "instructions": "Open the noVNC URL, log in to the target platform, then click 'Complete'.",
+        "instructions": "Open the noVNC URL in a new tab, log in to the target platform, then click 'Complete'.",
     }
 
 
@@ -231,31 +267,27 @@ def complete_login(account_id: int, db: Session = Depends(get_db)):
     if not session:
         raise HTTPException(status_code=400, detail="No active login session found")
 
-    is_logged_in = False
-    if session.grid_session_id:
-        grid_url = _resolve_grid_url(account)
-        indicator = (account.login_indicator or "").strip()
-        checked = False
-        if indicator:
-            found = GridService.session_has_selector(grid_url, session.grid_session_id, indicator)
-            if found is not None:
-                is_logged_in = found
-                checked = True
-            else:
-                logger.warning(f"Selector check failed for account {account_id}; falling back to URL heuristic")
-        if not checked:
-            current_url = GridService.session_url(grid_url, session.grid_session_id)
-            if current_url is None:
-                logger.error(f"Cannot reach login session {session.grid_session_id} for account {account_id}")
-                return {"status": "retry",
-                        "message": "Cannot reach the login browser session. Please keep the browser open and try again."}
-            lowered = current_url.lower()
-            is_logged_in = not any(kw in lowered for kw in LOGIN_KEYWORDS)
+    try:
+        # Reuse the existing login session driver (kept alive in _login_drivers)
+        # instead of creating a brand-new driver that would conflict on the same
+        # Chrome user-data-dir profile.
+        driver = _login_drivers.get(account_id)
+        if driver is None:
+            raise HTTPException(
+                status_code=400,
+                detail="Login session driver not found — it may have timed out. Please restart login.",
+            )
+        browser = BrowserService(account, grid_service)
+        browser.driver = driver
+        is_logged_in = browser.check_login()
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Login check failed: {e}")
+        is_logged_in = False
 
     if is_logged_in:
-        # 校验通过：关闭 Grid 会话释放资源，账号标记 ACTIVE
-        if session.grid_session_id:
-            GridService.delete_session(_resolve_grid_url(account), session.grid_session_id)
+        _close_login_driver(account_id)
         AccountService.mark_logged_in(db, account)
         session.status = "COMPLETED"
         session.closed_at = datetime.now(timezone.utc)
@@ -275,7 +307,76 @@ def cancel_login(account_id: int, db: Session = Depends(get_db)):
     if not session:
         raise HTTPException(status_code=400, detail="No active login session")
 
+    _close_login_driver(account_id)
     session.status = "CLOSED"
     session.closed_at = datetime.now(timezone.utc)
     db.commit()
     return {"status": "cancelled"}
+
+
+# ── Cookie Extraction ──
+
+def _extract_cookies(account: Account, domain: str = None) -> dict:
+    """打开账号 profile 浏览器，提取所有 cookie。导航失败时通过 CDP 全量获取。"""
+    grid_url = _resolve_grid_url(account)
+    browser = BrowserService(account, grid_service)
+    cookies = []
+    try:
+        browser.create_session(grid_url=grid_url)
+        import time
+        # 尝试导航到平台首页；无效 URL 或网络错误时回退到 CDP 全量获取
+        platform = account.platform
+        if not platform.startswith("http://") and not platform.startswith("https://"):
+            platform = f"https://{platform}"
+        try:
+            browser.navigate(platform)
+            time.sleep(3)
+            cookies = browser.driver.get_cookies()
+        except Exception:
+            logger.warning(f"Navigate to {platform} failed, falling back to CDP Network.getAllCookies")
+            try:
+                result = browser.driver.execute_cdp_cmd("Network.getAllCookies", {})
+                cookies = result.get("cookies", [])
+            except Exception:
+                cookies = browser.driver.get_cookies()
+
+        if domain:
+            cookies = [c for c in cookies if domain in (c.get("domain") or "")]
+    finally:
+        browser.close_session()
+
+    cookie_str = "; ".join(f"{c['name']}={c['value']}" for c in cookies)
+    return {
+        "count": len(cookies),
+        "cookie_string": cookie_str,
+        "cookies": [
+            {"name": c["name"], "value": c["value"], "domain": c.get("domain")}
+            for c in cookies
+        ],
+    }
+
+
+@router.get("/{account_id}/cookies/plain")
+def get_cookies_plain(account_id: int, domain: str = None, db: Session = Depends(get_db)):
+    """返回纯文本 cookie 字符串，可直接作为 HTTP Cookie header。"""
+    from fastapi.responses import PlainTextResponse
+    account = AccountService.get_by_id(db, account_id)
+    if not account:
+        raise HTTPException(status_code=404, detail="Account not found")
+    if account.status not in ("ACTIVE", "IN_USE"):
+        raise HTTPException(status_code=400, detail=f"Account status is {account.status}, not logged in")
+
+    result = _extract_cookies(account, domain=domain)
+    return PlainTextResponse(result["cookie_string"])
+
+
+@router.get("/{account_id}/cookies")
+def get_cookies(account_id: int, domain: str = None, db: Session = Depends(get_db)):
+    """返回 JSON 格式的 cookie 列表。"""
+    account = AccountService.get_by_id(db, account_id)
+    if not account:
+        raise HTTPException(status_code=404, detail="Account not found")
+    if account.status not in ("ACTIVE", "IN_USE"):
+        raise HTTPException(status_code=400, detail=f"Account status is {account.status}, not logged in")
+
+    return _extract_cookies(account, domain=domain)

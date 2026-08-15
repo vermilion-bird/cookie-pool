@@ -63,6 +63,7 @@ export function LoginModal({ accountId, onClose }: { accountId: number; onClose:
       open
       title={`Login Account #${accountId}`}
       onClose={() => cancelMutation.mutate()}
+      size="xl"
       footer={
         step !== 'success' && (
           <>
@@ -118,14 +119,25 @@ export function LoginModal({ accountId, onClose }: { accountId: number; onClose:
       {/* Browser ready */}
       {step === 'ready' && novncUrl && (
         <div>
-          <div className="mb-3 flex items-center gap-2 rounded-lg bg-indigo-50 px-4 py-2.5 text-sm text-indigo-700">
-            <span className="text-base">👆</span>
-            <span>Log in to the target platform in the browser. Click <strong>Login Complete</strong> when done.</span>
+          <div className="mb-3 flex items-center justify-between rounded-lg bg-indigo-50 px-4 py-2.5 text-sm text-indigo-700">
+            <span>
+              <span className="text-base">👆</span>{' '}
+              Log in to the target platform below. Click <strong>Login Complete</strong> when done.
+            </span>
+            <a
+              href={novncUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-xs font-medium text-indigo-500 underline transition-colors hover:text-indigo-700"
+            >
+              Open in new tab ↗
+            </a>
           </div>
           <div className="overflow-hidden rounded-xl border border-gray-200 bg-gray-900 shadow-inner">
             <iframe
               src={novncUrl}
-              className="h-[520px] w-full"
+              className="block w-full"
+              style={{ height: 'calc(90vh - 240px)', minHeight: '600px' }}
               title="noVNC Browser"
             />
           </div>

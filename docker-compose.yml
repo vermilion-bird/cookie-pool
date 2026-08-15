@@ -1,61 +1,50 @@
+# ============================================================
+# Cookie Pool — Selenium Grid + noVNC 人工登录账号池
+# ============================================================
+# 启动:  cp .env.example .env  →  编辑 .env  →  docker compose up -d
+# 停止:  docker compose down
+# 日志:  docker compose logs -f
+
 services:
-  # FastAPI 后端 + React SPA (多阶段构建)
+  # ── FastAPI 后端 + React SPA (多阶段构建) ──
   app:
     build:
       context: .
       dockerfile: Dockerfile
     container_name: cp-app
     ports:
-      - "8080:8080"
+      - "${APP_PORT:-8080}:8080"
     environment:
-      - GRID_URL=http://selenium-hub:4444
+      - GRID_URL=http://grid:4444
       - DATA_DIR=/data
-      - API_KEY=***
-      - HOST_ADDRESS=158.180.87.150
-      - NOVNC_PORT=7901
+      - API_KEY=${API_KEY:-change-me}
+      - HOST_ADDRESS=${HOST_ADDRESS:-127.0.0.1}
+      - NOVNC_PORT=${NOVNC_PORT:-7901}
     volumes:
-      - ./data:/data
+      - ${DATA_DIR:-./data}:/data
     depends_on:
-      selenium-hub:
+      grid:
         condition: service_started
     restart: unless-stopped
     networks:
       - cp-network
 
-  # Selenium Grid Router/Hub
-  selenium-hub:
-    image: seleniarm/hub:latest
-    container_name: cp-hub
-    environment:
-      - SE_SESSION_REQUEST_TIMEOUT=300
-      - SE_REJECT_UNSUPPORTED_CAPABILITIES=false
-    # 不暴露端口到宿主机，仅内部网络访问
-    restart: unless-stopped
-    networks:
-      - cp-network
-
-  # Chrome Node（可 scale 扩展）
-  chrome:
-    image: seleniarm/node-chromium:latest
-    container_name: cp-chrome
+  # ── Selenium Standalone Grid (hub + node + Chrome 合一) ──
+  grid:
+    image: ${GRID_IMAGE:-selenium/standalone-chromium:latest}
+    container_name: cp-grid
     shm_size: "2gb"
-    depends_on:
-      - selenium-hub
     environment:
-      - SE_EVENT_BUS_HOST=selenium-hub
-      - SE_EVENT_BUS_PUBLISH_PORT=4442
-      - SE_EVENT_BUS_SUBSCRIBE_PORT=4443
-      - SE_NODE_MAX_SESSIONS=1
-      - SE_VNC_VIEW_ONLY=0
+      - SE_NODE_MAX_SESSIONS=${GRID_MAX_SESSIONS:-1}
+      - SE_NODE_SESSION_TIMEOUT=${GRID_SESSION_TIMEOUT:-300}
       - SE_START_XVFB=true
       - SE_START_VNC=true
-      - SE_NODE_SESSION_TIMEOUT=300
-      - SE_OPTS=--override-max-sessions true
-      - SE_NODE_PORT=5555
+      - SE_START_NO_VNC=true
+      - SE_VNC_PASSWORD=${VNC_PASSWORD:-}
     volumes:
-      - ./data/profiles:/data/profiles
+      - ${DATA_DIR:-./data}/profiles:/data/profiles
     ports:
-      - "7901:7900"  # 宿主机 7901 → 容器 noVNC 7900
+      - "${NOVNC_PORT:-7901}:7900"
     restart: unless-stopped
     networks:
       - cp-network

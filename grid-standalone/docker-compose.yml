@@ -1,0 +1,53 @@
+# ============================================================
+# Selenium Standalone Grid — 标准化浏览器集群部署
+# ============================================================
+# 单容器：hub + node + Chrome + VNC + noVNC 全合一
+# 启动:  cp .env.example .env  →  docker compose up -d
+# 访问:  http://host:7900/vnc.html
+# 连接:  http://host:4444/wd/hub   (webdriver.Remote)
+
+services:
+  selenium:
+    image: ${GRID_IMAGE:-selenium/standalone-chromium:latest}
+    container_name: ${CONTAINER_NAME:-selenium-grid}
+    shm_size: "${SHM_SIZE:-2gb}"
+    restart: unless-stopped
+
+    environment:
+      # ── 会话 ──
+      - SE_NODE_MAX_SESSIONS=${GRID_MAX_SESSIONS:-1}
+      - SE_NODE_SESSION_TIMEOUT=${GRID_SESSION_TIMEOUT:-300}
+
+      # ── 显示服务 ──
+      - SE_START_XVFB=true
+      - SE_START_VNC=true
+      - SE_START_NO_VNC=true
+
+      # ── VNC 密码（可选；留空=无密码）──
+      - SE_VNC_PASSWORD=${VNC_PASSWORD:-}
+
+      # ── 时区 ──
+      - TZ=${TZ:-Asia/Shanghai}
+
+    ports:
+      - "${NOVNC_PORT:-7900}:7900"   # noVNC 网页
+      - "${VNC_PORT:-5900}:5900"     # VNC 原生（可选）
+      - "${GRID_PORT:-4444}:4444"    # Selenium Grid（可设为 127.0.0.1:4444:4444 仅本地）
+
+    volumes:
+      - ${PROFILES_DIR:-./profiles}:/home/seluser/chrome-profiles
+      # 如需挂载 Chrome profile 目录到容器内指定路径：
+      # - ./my-profile:/home/seluser/chrome-profiles/my-profile
+
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:4444/status | grep -q '\"ready\": *true'"]
+      interval: 30s
+      timeout: 10s
+      start_period: 60s
+      retries: 3
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
