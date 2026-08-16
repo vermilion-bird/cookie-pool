@@ -267,17 +267,30 @@ def _reconnect_via_grid(s: Session) -> object | None:
     if not node:
         return None
     try:
-        from selenium.webdriver.remote.webdriver import WebDriver as RemoteWebDriver
-        driver = RemoteWebDriver(
-            command_executor=f"{node.hub_url}/wd/hub/session/{s.grid_session_id}",
-            options=None,
+        from selenium import webdriver
+        from selenium.webdriver.remote.remote_connection import RemoteConnection
+        chrome_options = webdriver.ChromeOptions()
+        executor = RemoteConnection(node.hub_url)
+        executor.set_timeout(10)  # 10s 连接超时，防止阻塞启动
+        driver = webdriver.Remote(
+            command_executor=executor,
+            options=chrome_options,
         )
+        # webdriver.Remote() 自动创建了一个新 session → 保存其 ID 用于清理
+        temp_session_id = driver.session_id
+        # 切换到已有的 grid_session_id
+        driver.session_id = s.grid_session_id
+        # 清理临时创建的 session 释放 Grid 槽位
+        try:
+            grid_service.delete_session(node.hub_url, temp_session_id)
+        except Exception:
+            logger.debug(f"Failed to clean up temp session {temp_session_id}")
         # 验证连接
         driver.execute_script("return 1")
         logger.info(f"Reconnected to existing Grid session {s.grid_session_id}")
         return driver
     except Exception as e:
-        logger.warning(f"Failed to reconnect to Grid session {s.grid_session_id}: {e}")
+        logger.info(f"Cannot reconnect to Grid session {s.grid_session_id}: {e}")
         return None
 
 
@@ -355,8 +368,22 @@ def restart_session(session_id: int, db: DBSession = Depends(get_db)):
 def _extract_session_cookies(s: Session, platform_filter: str = None) -> dict:
     """从存活的 session driver 提取 cookie，按 platform 过滤。"""
     driver = _live_drivers.get(s.id)
+
+    # 检查 liveness；driver 对象存在但已死时尝试 Grid 重连
+    if driver is not None and not _ping_driver(driver):
+        logger.warning(f"Session {s.id} driver is dead, attempting Grid reconnect")
+        reconnected = _reconnect_via_grid(s)
+        if reconnected:
+            _live_drivers[s.id] = reconnected
+            driver = reconnected
+        else:
+            driver = None
+
     if driver is None:
-        raise HTTPException(status_code=400, detail="Session browser is not running. Start login first.")
+        raise HTTPException(
+            status_code=400,
+            detail="Session browser is not running. Call POST /{id}/restart to revive it.",
+        )
 
     try:
         # CDP 全量获取

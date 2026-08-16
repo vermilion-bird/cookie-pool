@@ -323,6 +323,8 @@ def _extract_cookies(account: Account, domain: str = None) -> dict:
     cookies = []
     try:
         browser.create_session(grid_url=grid_url)
+        # 防止页面加载过慢导致长时间阻塞
+        browser.driver.set_page_load_timeout(15)
         import time
         # 尝试导航到平台首页；无效 URL 或网络错误时回退到 CDP 全量获取
         platform = account.platform
@@ -330,7 +332,7 @@ def _extract_cookies(account: Account, domain: str = None) -> dict:
             platform = f"https://{platform}"
         try:
             browser.navigate(platform)
-            time.sleep(3)
+            time.sleep(1)
             cookies = browser.driver.get_cookies()
         except Exception:
             logger.warning(f"Navigate to {platform} failed, falling back to CDP Network.getAllCookies")

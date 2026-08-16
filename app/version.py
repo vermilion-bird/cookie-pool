@@ -5,4 +5,4 @@
 2. 同步 frontend-react/package.json 与 package-lock.json 的 version
 3. 在 CHANGELOG.md 增加条目并打 git tag（vX.Y.Z）
 """
-__version__ = "0.4.0"
+__version__ = "0.5.0"

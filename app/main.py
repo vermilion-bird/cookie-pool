@@ -14,6 +14,7 @@ from config import PROFILES_DIR, LOG_LEVEL, API_KEY
 from version import __version__
 from worker import worker, sweeper
 from scheduler import scheduler
+from session_watchdog import watchdog
 
 logging.basicConfig(level=getattr(logging, LOG_LEVEL.upper(), logging.INFO),
                     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
@@ -29,11 +30,13 @@ async def lifespan(app: FastAPI):
         worker.start()
         sweeper.start()
         scheduler.start()
+        watchdog.start()
     logger.info("Cookie Pool started (version %s)", app.version)
     yield
     scheduler.stop()
     sweeper.stop()
     worker.stop()
+    watchdog.stop()
     logger.info("Cookie Pool stopped")
 
 
@@ -60,14 +63,12 @@ async def api_key_middleware(request: Request, call_next):
 
 # 导入 API 路由
 from api.accounts import router as accounts_router
-from api.sessions import router as sessions_router_v1
 from api.sessions_v2 import router as sessions_router
 from api.tasks import router as tasks_router
 from api.grids import router as grids_router
 from api.schedules import router as schedules_router
 
 app.include_router(accounts_router, prefix="/api/accounts", tags=["accounts"])
-app.include_router(sessions_router_v1, prefix="/api/sessions", tags=["sessions"])
 app.include_router(sessions_router, prefix="/api", tags=["sessions-v2"])
 app.include_router(tasks_router, prefix="/api/tasks", tags=["tasks"])
 app.include_router(grids_router, prefix="/api/grids", tags=["grids"])

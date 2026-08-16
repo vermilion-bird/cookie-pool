@@ -7,9 +7,9 @@ import { SetApiKeyModal } from '@/components/SetApiKeyModal'
 const navItems = [
   { to: '/', label: 'Dashboard', icon: '◉' },
   { to: '/accounts', label: 'Accounts', icon: '◈' },
-  { to: '/tasks', label: 'Tasks', icon: '◎' },
+  // { to: '/tasks', label: 'Tasks', icon: '◎' },       // 暂时隐藏
   { to: '/grids', label: 'Grids', icon: '◐' },
-  { to: '/schedules', label: 'Schedules', icon: '⏰' },
+  // { to: '/schedules', label: 'Schedules', icon: '⏰' }, // 暂时隐藏
   { to: '/sessions', label: 'Sessions', icon: '🖥️' },
 ]
 

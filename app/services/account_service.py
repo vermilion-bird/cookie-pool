@@ -72,6 +72,15 @@ class AccountService:
                 if account.grid:
                     GridService.delete_session(account.grid.hub_url, s.grid_session_id)
 
+        # 清理关联数据：SessionAccount / BrowserSession / Task / Schedule
+        from models import SessionAccount, Task, Schedule
+        db.query(SessionAccount).filter(SessionAccount.account_id == account_id).delete()
+        db.query(Task).filter(Task.account_id == account_id).delete()
+        db.query(Schedule).filter(Schedule.account_id == account_id).delete()
+        # BrowserSession 由 Account.sessions cascade 处理，但显式删除以防万一
+        from models import BrowserSession
+        db.query(BrowserSession).filter(BrowserSession.account_id == account_id).delete()
+
         db.delete(account)
         db.commit()
         logger.info(f"Deleted account {account_id}")

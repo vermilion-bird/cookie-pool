@@ -110,19 +110,54 @@ docker exec -it selenium-grid bash # 进入容器
 
 ## Chrome Profile 管理
 
-Profile 保存在 `./profiles/` 目录，与容器内 `/home/seluser/chrome-profiles/` 映射。
+Profile 保存在 `./profiles/` 目录，与容器内 `/data/profiles/` 映射。
 
 ```
 profiles/
-├── account_youtube/       # YouTube 登录态
-├── account_google_ads/    # Google Ads 登录态
+├── session_ad-pool-01/       # 常驻 Session profile
+├── session_health-test/       # 常驻 Session profile
 └── ...
 ```
 
-每个 profile 目录由客户端通过 `--user-data-dir` 指定。
+每个 profile 目录由 cookie-pool 通过 `--user-data-dir` 指定。
 
 > 注意：容器内 Chrome 以 `seluser` 用户运行，profile 目录需可写。
 > 如需外部创建 profile 目录：`mkdir -p profiles/new-account && chmod 777 profiles/new-account`
+
+### ⚠ 跨服务器 Profile 预创建
+
+**限制：cookie-pool 与 Grid 不在同一服务器时，app 的 `os.makedirs(profile_path)` 在本地执行，远端 Grid 看不到。**
+
+**使用前必须在 Grid 服务器上预创建 profile 目录：**
+
+```bash
+# 在 Grid 服务器上（如 192.9.249.67）
+sudo mkdir -p /path/to/grid-standalone/profiles/session_<name>
+sudo chmod 777 /path/to/grid-standalone/profiles/session_<name>
+```
+
+profile 命名规则：`session_<session-name>`（空格替换为下划线，小写）。
+
+> 此限制仅影响「跨服务器 Grid」。同一 Docker 主机上的 Grid（如 hub+node 集群）共享 `./data/profiles` 卷，不受影响。
+
+### 接入 cookie-pool
+
+部署 Grid 后，在 cookie-pool Web UI（Grids 页面）或 API 注册：
+
+```bash
+curl -X POST http://<cookie-pool-host>:8080/api/grids \
+  -H "X-API-Key: <api-key>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Grid-192",
+    "hub_url": "http://192.9.249.67:4444",
+    "novnc_base_url": "http://192.9.249.67:7900/vnc.html",
+    "max_sessions": 1,
+    "notes": "Standalone Chromium on 192.9.249.67"
+  }'
+```
+
+创建 Session 时选择对应 Node，点击 Start 即可在远端浏览器登录。
 
 ## 故障排查
 

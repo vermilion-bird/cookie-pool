@@ -151,6 +151,7 @@ class GridService:
             command_executor=f"{effective_url}/wd/hub",
             options=chrome_options,
         )
+        driver.set_page_load_timeout(30)
         driver.implicitly_wait(10)
         logger.info(f"Grid session created ({effective_url}): {driver.session_id}")
 

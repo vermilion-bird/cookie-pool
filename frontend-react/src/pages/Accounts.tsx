@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react'
+import { useMemo, useRef, useState, useEffect } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/lib/api'
 import { Card, CardSection, CardHeader } from '@/components/Card'
@@ -21,15 +21,113 @@ const filterOptions: { label: string; value: FilterValue }[] = [
   { label: 'Expired', value: 'LOGIN_EXPIRED' },
 ]
 
+// ── Predefined platforms ──
+const PREDEFINED_PLATFORMS = [
+  { label: 'YouTube',        value: 'youtube.com' },
+  { label: 'TikTok',         value: 'tiktok.com' },
+  { label: 'Instagram',      value: 'instagram.com' },
+  { label: 'Facebook',       value: 'facebook.com' },
+  { label: 'Twitter / X',    value: 'twitter.com' },
+  { label: 'LinkedIn',       value: 'linkedin.com' },
+  { label: 'Reddit',         value: 'reddit.com' },
+  { label: '微信',            value: 'weixin.qq.com' },
+  { label: '抖音',            value: 'douyin.com' },
+  { label: '小红书',          value: 'xiaohongshu.com' },
+  { label: 'Bilibili',       value: 'bilibili.com' },
+  { label: '微博',            value: 'weibo.com' },
+  { label: '快手',            value: 'kuaishou.com' },
+  { label: '知乎',            value: 'zhihu.com' },
+]
+
 const platformIcons: Record<string, string> = {
   YouTube: '▶️', Google: '🔍', Facebook: '📘',
   TikTok: '🎵', Instagram: '📷', Twitter: '𝕏', LinkedIn: '💼',
+  Reddit: '🤖', Bilibili: '📺', WeChat: '💬', Weibo: '📢', Zhihu: '❓',
 }
 
 function getIcon(platform: string): string {
   for (const [key, icon] of Object.entries(platformIcons))
     if (platform.toLowerCase().includes(key.toLowerCase())) return icon
   return '🔑'
+}
+
+// ── PlatformSelect: searchable dropdown with custom fallback ──
+function PlatformSelect({ value, onChange, id }: { value: string; onChange: (v: string) => void; id?: string }) {
+  const [open, setOpen] = useState(false)
+  const [query, setQuery] = useState(value)
+  const containerRef = useRef<HTMLDivElement>(null)
+
+  // sync external value changes (e.g. edit form load)
+  useEffect(() => { setQuery(value) }, [value])
+
+  // close on outside click
+  useEffect(() => {
+    if (!open) return
+    function handler(e: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [open])
+
+  const filtered = PREDEFINED_PLATFORMS.filter(p =>
+    p.label.toLowerCase().includes(query.toLowerCase()) ||
+    p.value.toLowerCase().includes(query.toLowerCase())
+  )
+  const exactMatch = PREDEFINED_PLATFORMS.some(p => p.value === query || p.label === query)
+  const showCustom = query.trim().length > 0 && !exactMatch
+
+  function select(platformValue: string) {
+    setQuery(platformValue)
+    onChange(platformValue)
+    setOpen(false)
+  }
+
+  return (
+    <div ref={containerRef} className="relative">
+      <input
+        id={id}
+        className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm"
+        placeholder="Search or type custom..."
+        value={query}
+        onFocus={() => setOpen(true)}
+        onChange={e => { setQuery(e.target.value); onChange(e.target.value); setOpen(true) }}
+        onKeyDown={e => {
+          if (e.key === 'Escape') setOpen(false)
+          if (e.key === 'Enter') {
+            if (filtered.length === 1 && !showCustom) select(filtered[0].value)
+            else if (showCustom) { onChange(query.trim()); setOpen(false) }
+          }
+        }}
+      />
+      {open && (filtered.length > 0 || showCustom) && (
+        <div className="absolute z-30 mt-1 w-full rounded-lg border border-gray-200 bg-white shadow-lg max-h-56 overflow-y-auto">
+          {filtered.map(p => (
+            <button
+              key={p.value}
+              type="button"
+              className={`flex w-full items-center gap-2 px-3 py-2 text-sm text-left transition-colors hover:bg-gray-100 ${p.value === query || p.label === query ? 'bg-blue-50 text-blue-700' : 'text-ink-soft'}`}
+              onClick={() => select(p.value)}
+            >
+              <span className="text-xs opacity-60 w-6 text-center">{(platformIcons[p.label] ?? '')}</span>
+              <span className="font-medium">{p.label}</span>
+              <span className="text-xs opacity-40 ml-auto">{p.value}</span>
+            </button>
+          ))}
+          {showCustom && (
+            <button
+              type="button"
+              className="flex w-full items-center gap-2 px-3 py-2 text-sm text-left text-blue-600 transition-colors hover:bg-blue-50 border-t border-gray-100"
+              onClick={() => { onChange(query.trim()); setQuery(query.trim()); setOpen(false) }}
+            >
+              <span className="text-xs">✏️</span>
+              <span>Use custom: <strong>{query.trim()}</strong></span>
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  )
 }
 
 const emptyForm = { name: '', platform: '', notes: '', gridId: '' as number | string, loginIndicator: '' }
@@ -146,7 +244,7 @@ export function Accounts() {
               <div className="min-w-[120px] flex-1"><label className="mb-1 block text-xs font-semibold text-ink-soft/50 uppercase tracking-wider">Name</label>
                 <input className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm" placeholder="tiktok_ads_01" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} onKeyDown={e => e.key === 'Enter' && handleCreate()} /></div>
               <div className="min-w-[120px] flex-1"><label className="mb-1 block text-xs font-semibold text-ink-soft/50 uppercase tracking-wider">Platform</label>
-                <input className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm" placeholder="ads.tiktok.com" value={form.platform} onChange={e => setForm({ ...form, platform: e.target.value })} onKeyDown={e => e.key === 'Enter' && handleCreate()} /></div>
+                <PlatformSelect value={form.platform} onChange={v => setForm({ ...form, platform: v })} /></div>
               <div className="min-w-[110px] flex-1"><label className="mb-1 block text-xs font-semibold text-ink-soft/50 uppercase tracking-wider">Grid</label>
                 <select className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm" value={form.gridId} onChange={e => setForm({ ...form, gridId: e.target.value })}><option value="">Default</option>{grids.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}</select></div>
               <div className="min-w-[130px] flex-1"><label className="mb-1 block text-xs font-semibold text-ink-soft/50 uppercase tracking-wider">Bind to Session</label>
@@ -175,7 +273,7 @@ export function Accounts() {
           footer={<><Button variant="primary" loading={updateMutation.isPending} onClick={handleSaveEdit}>Save</Button><Button variant="outline" onClick={() => setEditAccount(null)}>Cancel</Button></>}>
           <div className="space-y-4">
             <div><label className="mb-1.5 block text-xs font-semibold text-ink-soft/50 uppercase tracking-wider">Name</label><input className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm" value={editForm.name} onChange={e => setEditForm({ ...editForm, name: e.target.value })} /></div>
-            <div><label className="mb-1.5 block text-xs font-semibold text-ink-soft/50 uppercase tracking-wider">Platform</label><input className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm" value={editForm.platform} onChange={e => setEditForm({ ...editForm, platform: e.target.value })} /></div>
+            <div><label className="mb-1.5 block text-xs font-semibold text-ink-soft/50 uppercase tracking-wider">Platform</label><PlatformSelect value={editForm.platform} onChange={v => setEditForm({ ...editForm, platform: v })} /></div>
             <div><label className="mb-1.5 block text-xs font-semibold text-ink-soft/50 uppercase tracking-wider">Grid</label><select className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm" value={editForm.gridId} onChange={e => setEditForm({ ...editForm, gridId: e.target.value })}><option value="">Default</option>{grids.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}</select></div>
             <div><label className="mb-1.5 block text-xs font-semibold text-ink-soft/50 uppercase tracking-wider">Bind to Session</label><select className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm" value={editingSessionId} onChange={e => setEditingSessionId(e.target.value)}><option value="">None</option>{sessions.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select></div>
           </div>

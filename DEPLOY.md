@@ -314,6 +314,50 @@ cd cookie-pool-2
 
 ---
 
+## 接入外部 Grid（跨服务器）
+
+Grid 与 cookie-pool 不在同一服务器时，需要额外处理 profile 目录。
+
+### ⚠ 限制：Profile 目录需预创建
+
+cookie-pool 的 `os.makedirs(profile_path)` 在 **app 容器本地**执行，远端 Grid 服务器**看不到**这个目录。Chrome 通过 `--user-data-dir` 指向的路径必须在 Grid 服务器上实际存在且可写。
+
+**每次创建新 Session 后、Start 之前，在 Grid 服务器上执行：**
+
+```bash
+# profile 命名规则: session_<name>（名称小写，空格换下划线）
+sudo mkdir -p <profiles-dir>/session_<session-name>
+sudo chmod 777 <profiles-dir>/session_<session-name>
+```
+
+**示例**（Session 名为 `ad-pool-01`，Grid 在 192.9.249.67）：
+
+```bash
+ssh ubuntu@192.9.249.67
+sudo mkdir -p /home/ubuntu/grid-standalone/profiles/session_ad-pool-01
+sudo chmod 777 /home/ubuntu/grid-standalone/profiles/session_ad-pool-01
+```
+
+> **不影响同机 Grid**：同一 Docker 主机上的 hub+node 集群共享 `./data/profiles` 数据卷，app 创建的目录直接可见，无需预创建。
+
+### 注册外部 Grid
+
+```bash
+curl -X POST http://<cookie-pool>:8080/api/grids \
+  -H "X-API-Key: <api-key>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Grid-192",
+    "hub_url": "http://192.9.249.67:4444",
+    "novnc_base_url": "http://192.9.249.67:7900/vnc.html",
+    "max_sessions": 1
+  }'
+```
+
+创建 Session 时选择对应的 Node（grid_id），Start 后通过 noVNC 在远端浏览器登录。
+
+---
+
 ## 从旧版升级（seleniarm hub+node → standalone）
 
 如果之前使用 `seleniarm/hub` + `seleniarm/node-chromium` 部署：

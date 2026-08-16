@@ -57,7 +57,7 @@ services:
       - SE_START_NO_VNC=true
       - SE_VNC_PASSWORD=${VNC_PASSWORD:-}
     volumes:
-      - ${DATA_DIR:-./data}/profiles/node-1:/data/profiles
+      - ${DATA_DIR:-./data}/profiles:/data/profiles
     ports:
       - "7901:7900"
     restart: unless-stopped
@@ -82,7 +82,7 @@ services:
       - SE_START_NO_VNC=true
       - SE_VNC_PASSWORD=${VNC_PASSWORD:-}
     volumes:
-      - ${DATA_DIR:-./data}/profiles/node-2:/data/profiles
+      - ${DATA_DIR:-./data}/profiles:/data/profiles
     ports:
       - "7902:7900"
     restart: unless-stopped
@@ -108,7 +108,7 @@ services:
       - SE_START_NO_VNC=true
       - SE_VNC_PASSWORD=${VNC_PASSWORD:-}
     volumes:
-      - ${DATA_DIR:-./data}/profiles/node-3:/data/profiles
+      - ${DATA_DIR:-./data}/profiles:/data/profiles
     ports:
       - "7903:7900"
     restart: unless-stopped
