@@ -1,7 +1,7 @@
 import type {
   Account, Task, Schedule, TaskTypeMeta,
   LoginStartResponse, LoginCompleteResponse, GridInstance, GridCheckResult,
-  SessionV2, SessionV2Account,
+  SessionV2, SessionV2Account, SessionHealth,
 } from '@/types'
 
 const API_KEY_STORAGE = 'cp_api_key'
@@ -149,5 +149,9 @@ export const api = {
       request<{ session: SessionV2; novnc_url: string; message: string }>(`/api/sessions/${id}/login`, { method: 'POST' }),
     completeLogin: (id: number) =>
       request<{ status: string; message: string }>(`/api/sessions/${id}/login/complete`, { method: 'POST' }),
+    health: (id: number) =>
+      request<SessionHealth>(`/api/sessions/${id}/health`),
+    restart: (id: number) =>
+      request<{ session: SessionV2; novnc_url: string; message: string }>(`/api/sessions/${id}/restart`, { method: 'POST' }),
   },
 }

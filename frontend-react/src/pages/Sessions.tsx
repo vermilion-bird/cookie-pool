@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, getApiKey } from '@/lib/api'
 import { Card, CardSection, CardHeader } from '@/components/Card'
@@ -8,7 +8,7 @@ import { Modal } from '@/components/Modal'
 import { EmptyState, SkeletonCard } from '@/components/EmptyState'
 import { useToast } from '@/hooks/useToast'
 import { timeAgo } from '@/lib/format'
-import type { SessionV2 } from '@/types'
+import type { SessionV2, SessionHealth } from '@/types'
 
 export function Sessions() {
   const toast = useToast()
@@ -20,6 +20,8 @@ export function Sessions() {
   const [actionLoading, setActionLoading] = useState(false)
   const [cookiePlatform, setCookiePlatform] = useState('')
   const [cookieResult, setCookieResult] = useState('')
+  const [healthMap, setHealthMap] = useState<Map<number, SessionHealth>>(new Map())
+  const healthTimer = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ['sessions'] })
@@ -32,6 +34,36 @@ export function Sessions() {
   const sessions = data?.sessions ?? []
   const grids = gridData?.grids ?? []
   const detailSession = sessions.find(s => s.id === detailId) ?? null
+
+  // ── Health polling for detail session ──
+  useEffect(() => {
+    if (!detailId) {
+      if (healthTimer.current) { clearInterval(healthTimer.current); healthTimer.current = null }
+      return
+    }
+    async function poll() {
+      try {
+        const h = await api.sessions.health(detailId!)
+        setHealthMap(prev => { const next = new Map(prev); next.set(detailId!, h); return next })
+      } catch { /* ignore */ }
+    }
+    poll()
+    healthTimer.current = setInterval(poll, 8000)
+    return () => { if (healthTimer.current) { clearInterval(healthTimer.current); healthTimer.current = null } }
+  }, [detailId])
+
+  // Also poll health for ACTIVE/LOGIN sessions in the list (one-time batch)
+  useEffect(() => {
+    const needCheck = sessions.filter(s =>
+      (s.status === 'ACTIVE' || s.status === 'LOGIN') && !healthMap.has(s.id)
+    )
+    if (needCheck.length === 0) return
+    needCheck.forEach(s => {
+      api.sessions.health(s.id).then(h =>
+        setHealthMap(prev => { const next = new Map(prev); next.set(s.id, h); return next })
+      ).catch(() => {})
+    })
+  }, [sessions])
 
   const createMutation = useMutation({
     mutationFn: () => api.sessions.create({ name: name.trim(), node_id: parseInt(nodeId, 10) || 1 }),
@@ -79,13 +111,33 @@ export function Sessions() {
     } catch (e: any) { toast('Failed: ' + e.message, 'error') }
   }
 
+  async function restartSession(id: number) {
+    setActionLoading(true)
+    try { await api.sessions.restart(id); toast('Browser restarted', 'success'); invalidate() }
+    catch (e: any) { toast('Failed: ' + e.message, 'error') }
+    finally { setActionLoading(false) }
+  }
+
+  function healthDot(s: SessionV2) {
+    const h = healthMap.get(s.id)
+    if (!h) return null
+    return (
+      <span title={h.alive ? 'Browser alive' : 'Browser dead — click Restart'} className={`ml-1 inline-block h-2 w-2 rounded-full ${h.alive ? 'bg-green-400 animate-pulse' : 'bg-red-400'}`} />
+    )
+  }
+
   function actionButton(s: SessionV2) {
+    const h = healthMap.get(s.id)
+    const isDead = (s.status === 'ACTIVE' || s.status === 'LOGIN') && h && !h.alive
+
     switch (s.status) {
       case 'IDLE': case 'CLOSED': case 'FAILED':
         return <Button variant="success" size="sm" loading={actionLoading} onClick={() => startSession(s.id)}>Start</Button>
       case 'LOGIN': case 'CREATING': case 'READY':
+        if (isDead) return <Button variant="warning" size="sm" loading={actionLoading} onClick={() => restartSession(s.id)}>Restart</Button>
         return <Button variant="success" size="sm" onClick={() => completeSession(s.id)}>Complete</Button>
       case 'ACTIVE':
+        if (isDead) return <Button variant="warning" size="sm" loading={actionLoading} onClick={() => restartSession(s.id)}>Restart</Button>
         return <Button variant="outline" size="sm" onClick={() => stopSession(s.id)}>Stop</Button>
       default:
         return <Button variant="primary" size="sm" loading={actionLoading} onClick={() => startSession(s.id)}>Start</Button>
@@ -126,7 +178,7 @@ export function Sessions() {
                 <div className="min-w-0 flex-[2]">
                   <div className="flex items-center gap-2">
                     <span className="text-sm font-semibold text-ink truncate cursor-pointer hover:text-brand" onClick={() => setDetailId(s.id)}>{s.name}</span>
-                    <Badge status={s.status as any} />
+                    <Badge status={s.status as any} />{healthDot(s)}
                   </div>
                   <p className="mt-0.5 text-xs text-ink-soft/40">{s.accounts?.length || 0} account(s) · {grids.find(g => g.id === s.node_id)?.name ?? `Node #${s.node_id}`}</p>
                 </div>
@@ -154,6 +206,18 @@ export function Sessions() {
               <span className="text-xs text-ink-soft/40">Node: {grids.find(g => g.id === detailSession.node_id)?.name ?? '?'}</span>
               {detailSession.novnc_url && <a href={detailSession.novnc_url} target="_blank" rel="noopener noreferrer" className="ml-auto text-xs text-brand underline">noVNC ↗</a>}
             </div>
+
+            {/* Browser health */}
+            {(detailSession.status === 'ACTIVE' || detailSession.status === 'LOGIN') && (() => {
+              const h = healthMap.get(detailSession.id)
+              return (
+                <div className={`flex items-center gap-2 rounded-lg px-3 py-2 text-sm ${!h ? 'bg-gray-50 text-ink-soft/40' : h.alive ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-600'}`}>
+                  <span className={`inline-block h-2.5 w-2.5 rounded-full ${!h ? 'bg-gray-300' : h.alive ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`} />
+                  <span>{!h ? 'Checking browser health...' : h.alive ? 'Browser alive' : 'Browser is dead — restart required'}</span>
+                  {h && !h.alive && <Button variant="warning" size="sm" loading={actionLoading} onClick={() => restartSession(detailSession.id)} className="ml-auto">Restart Browser</Button>}
+                </div>
+              )
+            })()}
 
             {/* noVNC — shown when ACTIVE or LOGIN */}
             {(detailSession.status === 'ACTIVE' || detailSession.status === 'LOGIN') && detailSession.novnc_url && (

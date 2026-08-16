@@ -140,3 +140,11 @@ export interface SessionV2 {
   closed_at: string | null
   accounts: SessionV2Account[]
 }
+
+export interface SessionHealth {
+  session_id: number
+  status: string
+  alive: boolean
+  driver_exists: boolean
+  grid_session_id: string | null
+}

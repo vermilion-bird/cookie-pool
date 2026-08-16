@@ -154,21 +154,30 @@ def unbind_account(session_id: int, account_id: int, db: DBSession = Depends(get
 
 @router.post("/{session_id}/login")
 def start_login(session_id: int, db: DBSession = Depends(get_db)):
-    """启动常驻浏览器，返回 noVNC URL。复用已存活的 driver。"""
+    """启动常驻浏览器，返回 noVNC URL。复用已存活的 driver；死 driver 自动重启。"""
     s = db.query(Session).filter(Session.id == session_id).first()
     if not s:
         raise HTTPException(status_code=404, detail="Session not found")
 
-    # 复用已存活 driver
-    if session_id in _live_drivers and s.status == "ACTIVE":
+    node = db.query(GridInstance).filter(GridInstance.id == s.node_id).first()
+
+    # ── 检查已有 driver 是否存活 ──
+    existing = _live_drivers.get(session_id)
+    if existing is not None and _ping_driver(existing):
+        # Driver 存活 → 直接复用
+        if s.status not in ("LOGIN", "ACTIVE"):
+            s.status = "LOGIN"
+            db.commit()
         return {
             "session": s.to_dict(),
-            "novnc_url": s.novnc_url,
+            "novnc_url": s.novnc_url or _resolve_novnc_url(node),
             "message": "Browser already running",
         }
 
-    # 关闭旧残留
+    # ── Driver 已死或不存在 → 关闭残留 + 重建（复用 profile 保留登录态）─
     _close_driver(session_id)
+
+    # 清理旧 BrowserSession 残留
     old = db.query(BrowserSession).filter(
         BrowserSession.status.in_(["CREATING", "READY", "LOGIN"]),
     ).all()
@@ -179,7 +188,6 @@ def start_login(session_id: int, db: DBSession = Depends(get_db)):
     s.status = "CREATING"
     db.commit()
 
-    node = db.query(GridInstance).filter(GridInstance.id == s.node_id).first()
     try:
         os.makedirs(s.profile_path, exist_ok=True)
         os.chmod(s.profile_path, 0o777)
@@ -190,8 +198,9 @@ def start_login(session_id: int, db: DBSession = Depends(get_db)):
         s.grid_session_id = driver.session_id
         s.novnc_url = _resolve_novnc_url(node)
         s.status = "LOGIN"
+        s.closed_at = None
         db.commit()
-        logger.info(f"Session {session_id} login started (node={node.hub_url})")
+        logger.info(f"Session {session_id} login started (node={node.hub_url}, profile={s.profile_path})")
     except Exception as e:
         _close_driver(session_id)
         s.status = "FAILED"
@@ -237,6 +246,108 @@ def cancel_login(session_id: int, db: DBSession = Depends(get_db)):
     s.closed_at = datetime.now(timezone.utc)
     db.commit()
     return {"status": "cancelled"}
+
+
+# ── Health ──
+
+def _ping_driver(driver) -> bool:
+    """轻量 ping：执行 return 1，成功即存活。"""
+    try:
+        return driver.execute_script("return 1") == 1
+    except Exception:
+        return False
+
+
+def _reconnect_via_grid(s: Session) -> object | None:
+    """通过已存储的 grid_session_id 尝试重新连接到已有的 Grid session。
+    仅当 Python driver 丢失但 Grid 端 session 仍存活时有用。"""
+    if not s.grid_session_id:
+        return None
+    node = s.node
+    if not node:
+        return None
+    try:
+        from selenium.webdriver.remote.webdriver import WebDriver as RemoteWebDriver
+        driver = RemoteWebDriver(
+            command_executor=f"{node.hub_url}/wd/hub/session/{s.grid_session_id}",
+            options=None,
+        )
+        # 验证连接
+        driver.execute_script("return 1")
+        logger.info(f"Reconnected to existing Grid session {s.grid_session_id}")
+        return driver
+    except Exception as e:
+        logger.warning(f"Failed to reconnect to Grid session {s.grid_session_id}: {e}")
+        return None
+
+
+@router.get("/{session_id}/health")
+def session_health(session_id: int, db: DBSession = Depends(get_db)):
+    """检查 session 浏览器是否存活。"""
+    s = db.query(Session).filter(Session.id == session_id).first()
+    if not s:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    driver = _live_drivers.get(session_id)
+    alive = driver is not None and _ping_driver(driver)
+
+    # 如果 driver 丢失但 grid_session_id 还在，尝试重连
+    if not alive and s.grid_session_id:
+        reconnected = _reconnect_via_grid(s)
+        if reconnected:
+            _live_drivers[session_id] = reconnected
+            alive = True
+            driver = reconnected
+
+    return {
+        "session_id": session_id,
+        "status": s.status,
+        "alive": alive,
+        "driver_exists": driver is not None,
+        "grid_session_id": s.grid_session_id,
+    }
+
+
+@router.post("/{session_id}/restart")
+def restart_session(session_id: int, db: DBSession = Depends(get_db)):
+    """重启 session 浏览器（复用同一 profile，保留登录态）。"""
+    s = db.query(Session).filter(Session.id == session_id).first()
+    if not s:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    if s.status not in ("LOGIN", "ACTIVE", "FAILED", "CLOSED"):
+        raise HTTPException(status_code=400,
+                            detail=f"Session is {s.status}; only LOGIN/ACTIVE/FAILED/CLOSED can be restarted")
+
+    # 关闭旧 driver
+    _close_driver(session_id)
+
+    node = db.query(GridInstance).filter(GridInstance.id == s.node_id).first()
+    try:
+        os.makedirs(s.profile_path, exist_ok=True)
+        os.chmod(s.profile_path, 0o777)
+
+        driver = grid_service.create_driver(s.profile_path, grid_url=node.hub_url)
+        _live_drivers[session_id] = driver
+
+        s.grid_session_id = driver.session_id
+        s.novnc_url = _resolve_novnc_url(node)
+        s.status = "LOGIN"
+        s.closed_at = None
+        db.commit()
+        logger.info(f"Session {session_id} restarted (profile={s.profile_path})")
+    except Exception as e:
+        _close_driver(session_id)
+        s.status = "FAILED"
+        s.closed_at = datetime.now(timezone.utc)
+        db.commit()
+        raise HTTPException(status_code=500, detail=f"Failed to restart browser: {e}")
+
+    return {
+        "session": s.to_dict(),
+        "novnc_url": s.novnc_url,
+        "message": "Browser restarted with same profile. Open noVNC to verify login state, then click Complete.",
+    }
 
 
 # ── Cookie 提取 ──
