@@ -1,36 +1,8 @@
-
-
-# ── 审计日志 ──
-
-class AuditLog(Base):
-    """操作审计日志：记录关键操作（创建/删除/登录/状态变更等），
-    支持追责与合规。"""
-
-    __tablename__ = "audit_logs"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    event = Column(String(64), nullable=False, comment="事件类型: account.created / task.completed / ...")
-    entity_type = Column(String(32), nullable=False, comment="实体类型: account / task / session / grid / schedule")
-    entity_id = Column(Integer, nullable=True, comment="实体 ID")
-    detail = Column(Text, default="", comment="JSON 附加信息")
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
-
-    def to_dict(self):
-        return {
-            "id": self.id,
-            "event": self.event,
-            "entity_type": self.entity_type,
-            "entity_id": self.entity_id,
-            "detail": self.detail,
-            "created_at": self.created_at.isoformat() if self.created_at else None,
-        }
-
 from datetime import datetime, timezone
 from sqlalchemy import Boolean, Column, Integer, String, DateTime, Text, ForeignKey, UniqueConstraint
 from sqlalchemy.orm import relationship
 
 from database import Base
-
 
 class Schedule(Base):
     """cron 定时调度：按计划为目标账号创建任务。account_id 为空 = 所有 ACTIVE 账号。"""
@@ -293,3 +265,28 @@ class Task(Base):
             return json.loads(self.artifact_paths or "[]")
         except (ValueError, TypeError):
             return []
+
+# ── 审计日志 ──
+
+class AuditLog(Base):
+    """操作审计日志：记录关键操作（创建/删除/登录/状态变更等），
+    支持追责与合规。"""
+
+    __tablename__ = "audit_logs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    event = Column(String(64), nullable=False, comment="事件类型: account.created / task.completed / ...")
+    entity_type = Column(String(32), nullable=False, comment="实体类型: account / task / session / grid / schedule")
+    entity_id = Column(Integer, nullable=True, comment="实体 ID")
+    detail = Column(Text, default="", comment="JSON 附加信息")
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "event": self.event,
+            "entity_type": self.entity_type,
+            "entity_id": self.entity_id,
+            "detail": self.detail,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
