@@ -103,9 +103,7 @@ export function Sessions() {
 
   async function extractCookies(sessionId: number) {
     try {
-      const p = cookiePlatform.trim()
-      const url = p ? `/api/sessions/${sessionId}/cookies/plain?platform=${encodeURIComponent(p)}` : `/api/sessions/${sessionId}/cookies/plain`
-      const text = await (await fetch(url, { headers: { 'X-API-Key': getApiKey() } })).text()
+      const text = await api.sessions.cookiesText(sessionId, cookiePlatform.trim() || undefined)
       setCookieResult(text || '(empty)')
       if (text) navigator.clipboard.writeText(text).then(() => toast('Copied!', 'success')).catch(() => {})
     } catch (e: any) { toast('Failed: ' + e.message, 'error') }
@@ -185,6 +183,15 @@ export function Sessions() {
                 <div className="hidden text-xs text-ink-soft/40 sm:block">{s.created_at ? timeAgo(s.created_at) : ''}</div>
                 <div className="flex items-center gap-1.5">
                   {actionButton(s)}
+                  {s.status === 'ACTIVE' && (
+                    <Button variant="ghost" size="sm" onClick={async () => {
+                      try {
+                        const text = await api.sessions.cookiesText(s.id)
+                        if (text) { await navigator.clipboard.writeText(text); toast('Cookies copied!', 'success') }
+                        else toast('No cookies found', 'error')
+                      } catch (e: any) { toast('Failed: ' + e.message, 'error') }
+                    }} title="Copy all cookies (Netscape format)">🍪 Copy</Button>
+                  )}
                   <Button variant="ghost" size="sm" onClick={() => setDetailId(s.id)}>Detail</Button>
                   <button onClick={() => { if (confirm(`Delete "${s.name}"?`)) deleteMutation.mutate(s.id) }}
                     className="flex h-8 w-8 items-center justify-center rounded-lg text-ink-soft/30 transition-colors hover:bg-red-50 hover:text-red-500"><svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg></button>

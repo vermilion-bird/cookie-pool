@@ -165,5 +165,14 @@ export const api = {
       request<SessionHealth>(`/api/sessions/${id}/health`),
     restart: (id: number) =>
       request<{ session: SessionV2; novnc_url: string; message: string }>(`/api/sessions/${id}/restart`, { method: 'POST' }),
+    cookies: (id: number, platform?: string) => {
+      const p = platform ? `?platform=${encodeURIComponent(platform)}` : ''
+      return request<{ count: number; cookie_string: string; cookies: { name: string; value: string; domain: string }[] }>(`/api/sessions/${id}/cookies${p}`)
+    },
+    cookiesText: async (id: number, platform?: string): Promise<string> => {
+      const p = platform ? `?platform=${encodeURIComponent(platform)}` : ''
+      const res = await fetch(`/api/sessions/${id}/cookies/plain${p}`, { headers: { 'X-API-Key': getApiKey() } })
+      return res.text()
+    },
   },
 }
