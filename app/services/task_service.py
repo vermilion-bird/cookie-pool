@@ -35,6 +35,8 @@ class TaskService:
         db.commit()
         db.refresh(task)
         logger.info(f"Task {task.id} created: {task_type} (account {account_id})")
+        from services import audit_service
+        audit_service.log(db, "task.created", "task", task.id, {"type": task_type, "account_id": account_id})
         return task
 
     @staticmethod
@@ -80,6 +82,8 @@ class TaskService:
             TaskService._collect_artifacts(db, task)
             db.commit()
             logger.info(f"Task {task.id} completed")
+            from services import audit_service
+            audit_service.log(db, "task.completed", "task", task.id, {"account_id": task.account_id, "type": task.type})
             _notify("task.completed", task)
         except Exception as e:
             task.error = str(e)
@@ -94,6 +98,8 @@ class TaskService:
                 task.status = "FAILED"
                 task.completed_at = datetime.now(timezone.utc)
                 logger.error(f"Task {task.id} failed: {e}")
+                from services import audit_service
+                audit_service.log(db, "task.failed", "task", task.id, {"account_id": task.account_id, "type": task.type, "error": str(e)})
                 _notify("task.failed", task)
         finally:
             try:

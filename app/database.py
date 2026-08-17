@@ -79,6 +79,14 @@ def init_db():
             db.add(default)
             db.commit()
 
+    # Add audit_logs table (migration to v0.5.1)
+    existing_tables = inspector.get_table_names()
+    if "audit_logs" not in existing_tables:
+        AuditLog = None  # will be imported from models
+        from models import AuditLog as _AuditLog
+        _AuditLog.__table__.create(bind=engine)
+
+
 
 def get_db():
     db = SessionLocal()

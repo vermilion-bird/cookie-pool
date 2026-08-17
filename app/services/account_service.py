@@ -42,6 +42,8 @@ class AccountService:
         db.commit()
         db.refresh(account)
         logger.info(f"Created account {account.id}: {name} ({platform}) grid_id={grid_id}")
+        from services import audit_service
+        audit_service.log(db, "account.created", "account", account.id, {"name": name, "platform": platform})
         return account
 
     @staticmethod
@@ -84,6 +86,8 @@ class AccountService:
         db.delete(account)
         db.commit()
         logger.info(f"Deleted account {account_id}")
+        from services import audit_service
+        audit_service.log(db, "account.deleted", "account", account_id, {"name": account.name})
 
         # 清理磁盘上的 Profile（级联删除会话/任务后）
         if profile_path and os.path.isdir(profile_path):
@@ -156,3 +160,5 @@ class AccountService:
         account.last_login_at = datetime.now(timezone.utc)
         account.last_check_at = datetime.now(timezone.utc)
         db.commit()
+        from services import audit_service
+        audit_service.log(db, "account.login", "account", account.id, {"platform": account.platform})
