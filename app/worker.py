@@ -141,28 +141,33 @@ class SessionSweeper:
     def sweep_once(self) -> int:
         """回收超过 SESSION_TIMEOUT_MINUTES 未结束的登录会话，返回回收数量。"""
         from config import SESSION_TIMEOUT_MINUTES
-        if SESSION_TIMEOUT_MINUTES <= 0:
-            return 0
-        cutoff = datetime.now(timezone.utc) - timedelta(minutes=SESSION_TIMEOUT_MINUTES)
         db = SessionLocal()
         try:
-            stale = db.query(BrowserSession).filter(
-                BrowserSession.status.in_(["CREATING", "READY", "LOGIN"]),
-                BrowserSession.created_at < cutoff,
-            ).all()
             closed = 0
-            for s in stale:
-                # 释放底层 Grid 会话，避免僵尸浏览器占用 Profile
-                if s.account and s.account.grid and s.grid_session_id:
-                    from services.grid_service import GridService
-                    GridService.delete_session(s.account.grid.hub_url, s.grid_session_id)
-                s.status = "CLOSED"
-                s.closed_at = datetime.now(timezone.utc)
-                closed += 1
-            if closed:
-                db.commit()
-                logger.info(f"SessionSweeper closed {closed} stale login session(s)")
-            return closed
+            if SESSION_TIMEOUT_MINUTES > 0:
+                cutoff = datetime.now(timezone.utc) - timedelta(minutes=SESSION_TIMEOUT_MINUTES)
+                stale = db.query(BrowserSession).filter(
+                    BrowserSession.status.in_(["CREATING", "READY", "LOGIN"]),
+                    BrowserSession.created_at < cutoff,
+                ).all()
+                for s in stale:
+                    # 释放底层 Grid 会话，避免僵尸浏览器占用 Profile
+                    if s.account and s.account.grid and s.grid_session_id:
+                        from services.grid_service import GridService
+                        GridService.delete_session(s.account.grid.hub_url, s.grid_session_id)
+                    s.status = "CLOSED"
+                    s.closed_at = datetime.now(timezone.utc)
+                    closed += 1
+                if closed:
+                    db.commit()
+                    logger.info(f"SessionSweeper closed {closed} stale login session(s)")
+
+            # 释放 IN_USE 泄漏（进程崩溃导致锁未释放）
+            from services.account_service import AccountService
+            released = AccountService.release_stale_locks(db)
+            if closed or released:
+                return closed + released
+            return 0
         finally:
             db.close()
 

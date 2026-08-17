@@ -1,0 +1,229 @@
+#!/usr/bin/env python3
+"""Cookie Pool CLI — get authenticated cookies from YouTube/TikTok/Meta/Google Ads."""
+
+import sys, json, urllib.request, urllib.error, os
+
+BASE = 'http://158.180.87.150:8080'
+KEY_FILE = '/tmp/cp_key'
+
+def load_key():
+    # 1) Environment variable
+    e = os.environ.get('CP' + '_API' + '_KEY', '')
+    if e:
+        return e
+    # 2) Project .env
+    p = os.path.expanduser('~/.openclaw/workspace/chief_technology_officer/projects/cookie-pool/.env')
+    if os.path.isfile(p):
+        with open(p) as f:
+            for line in f:
+                if line.strip().startswith('API_' + 'KEY='):
+                    return line.strip().split('=', 1)[1]
+    # 3) Fallback: /tmp/cp_key
+    if os.path.isfile(KEY_FILE):
+        with open(KEY_FILE) as f:
+            return f.read().strip()
+    return ''
+
+def api(path, method='GET', data=None):
+    k = load_key()
+    req = urllib.request.Request(f'{BASE}{path}', data=data, headers={'X-API-Key': k},
+                                  method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=15) as r:
+            return json.loads(r.read())
+    except urllib.error.HTTPError as e:
+        body = json.loads(e.read()) if e.headers.get('content-type','').startswith('application/json') else {}
+        die(f"HTTP {e.code}: {body.get('detail', body.get('message', str(body)))}")
+    except Exception as e:
+        die(f"Error: {e}")
+
+def die(msg):
+    print(msg, file=sys.stderr)
+    sys.exit(1)
+
+def colour(c, s):
+    codes = {'dim':2, 'red':31, 'green':32, 'yellow':33, 'cyan':36, 'bold':1}
+    return f"\033[{codes.get(c,0)}m{s}\033[0m"
+
+def cmd_list(args):
+    all_acc = '--all' in args
+    data = api('/api/accounts')
+    accs = data.get('accounts', [])
+    if not all_acc:
+        accs = [a for a in accs if a['status'] == 'ACTIVE']
+    if not accs:
+        print('No accounts found.')
+        return
+
+    print(f"{'ID':<4} {'Name':<18} {'Platform':<24} {'Status':<12} {'Grid'}")
+    print('-' * 80)
+    for a in accs:
+        st = a['status']
+        st_colour = 'green' if st == 'ACTIVE' else ('yellow' if st == 'WAIT_LOGIN' else 'red')
+        g = a.get('grid', {}) or {}
+        print(f"{a['id']:<4} {a['name']:<18} {a['platform']:<24} {colour(st_colour, st):<22} {g.get('name','-')}")
+
+def cmd_get(args):
+    ident = None
+    domain = None
+    plain = False
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a.startswith('--domain='):
+            domain = a.split('=', 1)[1]
+        elif a == '--domain' and i + 1 < len(args):
+            i += 1
+            domain = args[i]
+        elif a == '--plain':
+            plain = True
+        elif not a.startswith('-'):
+            ident = a
+        i += 1
+
+    if not ident:
+        die('Usage: cp get <account_id|name> [--plain] [--domain=<domain>]')
+
+    # Resolve by name first, then by id
+    acc_id = None
+    data = api('/api/accounts')
+    for a in data.get('accounts', []):
+        if a['name'].lower() == ident.lower():
+            acc_id = a['id']
+            break
+    if acc_id is None:
+        try:
+            acc_id = int(ident)
+        except ValueError:
+            die(f"Account '{ident}' not found.")
+
+    if plain:
+        path = f'/api/accounts/{acc_id}/cookies/plain'
+        if domain:
+            path += f'?domain={domain}'
+        req = urllib.request.Request(f'{BASE}{path}', headers={'X-API-Key': load_key()})
+        try:
+            with urllib.request.urlopen(req, timeout=15) as r:
+                print(r.read().decode())
+        except urllib.error.HTTPError as e:
+            die(f"HTTP {e.code}: {e.read().decode()}")
+        return
+
+    data = api(f'/api/accounts/{acc_id}/cookies')
+    cookies = data.get('cookies', [])
+    total = len(cookies)
+    if domain:
+        cookies = [c for c in cookies if domain in c.get('domain', '')]
+
+    print(f"{len(cookies)}/{total} cookies (account {acc_id})", end='')
+    if domain:
+        print(f", domain={domain}")
+    else:
+        print()
+    print()
+    print(f"{'Name':<36} {'Value (truncated)':<50} {'Domain'}")
+    print('-' * 120)
+    for c in cookies:
+        v = c['value'][:48] + ('…' if len(c['value']) > 48 else '')
+        print(f"{c['name']:<36} {v:<50} {c.get('domain','')}")
+
+def cmd_session(args):
+    sid = None
+    plain = False
+    platform = None
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a.startswith('--platform='):
+            platform = a.split('=', 1)[1]
+        elif a == '--platform' and i + 1 < len(args):
+            i += 1
+            platform = args[i]
+        elif a == '--plain':
+            plain = True
+        elif not a.startswith('-'):
+            sid = a
+        i += 1
+
+    if not sid:
+        die('Usage: cp session <session_id> [--plain] [--platform=<platform>]')
+
+    try:
+        sid = int(sid)
+    except ValueError:
+        die(f"Invalid session id: {sid}")
+
+    if plain:
+        path = f'/api/sessions/{sid}/cookies/plain'
+        if platform:
+            path += f'?platform={platform}'
+        req = urllib.request.Request(f'{BASE}{path}', headers={'X-API-Key': load_key()})
+        try:
+            with urllib.request.urlopen(req, timeout=15) as r:
+                print(r.read().decode())
+        except urllib.error.HTTPError as e:
+            die(f"HTTP {e.code}: {e.read().decode()}")
+        return
+
+    data = api(f'/api/sessions/{sid}/cookies')
+    cookies = data.get('cookies', [])
+    total = len(cookies)
+    if platform:
+        cookies = [c for c in cookies if platform in c.get('domain', '')]
+
+    print(f"{len(cookies)}/{total} cookies (session {sid})", end='')
+    if platform:
+        print(f", platform={platform}")
+    else:
+        print()
+    print()
+    print(f"{'Name':<36} {'Value (truncated)':<50} {'Domain'}")
+    print('-' * 120)
+    for c in cookies:
+        v = c['value'][:48] + ('…' if len(c['value']) > 48 else '')
+        print(f"{c['name']:<36} {v:<50} {c.get('domain','')}")
+
+def cmd_help():
+    print("""Cookie Pool CLI — get authenticated cookies
+
+Commands:
+  cp list [--all]              List accounts (default: ACTIVE only)
+  cp get <id|name> [--plain]   Get account cookies (JSON table or Netscape)
+               [--domain=<d>]  Filter by domain
+  cp session <id> [--plain]    Get session cookies (JSON table or Netscape)
+               [--platform=<p>] Filter by platform domain
+
+Examples:
+  cp list                       # Show active accounts
+  cp list --all                 # Show all accounts
+  cp get Youtube01              # Get cookies as table
+  cp get Youtube01 --plain      # Get Netscape cookie string
+  cp get Youtube01 --domain youtube.com
+  cp session 1                  # Session cookies as table
+  cp session 1 --plain          # Session cookies as Netscape
+  cp session 1 --platform tiktok
+
+Setup:
+  echo 'cookie-pool-158-2026' > /tmp/cp_key""")
+
+def main():
+    if len(sys.argv) < 2:
+        cmd_help()
+        return
+
+    cmd = sys.argv[1]
+    args = sys.argv[2:]
+
+    if cmd == 'list':
+        cmd_list(args)
+    elif cmd == 'get':
+        cmd_get(args)
+    elif cmd == 'session':
+        cmd_session(args)
+    elif cmd in ('help', '-h', '--help'):
+        cmd_help()
+    else:
+        die(f"Unknown command: {cmd}\nRun 'cp help' for usage.")
+
+if __name__ == '__main__':
+    main()

@@ -1,30 +1,55 @@
 # Cookie Pool — 部署文档
 
-Selenium Grid + noVNC 人工登录账号池。在无 GUI 的 Linux 服务器上运行 Chrome 浏览器，通过网页
-(noVNC) 手动登录目标平台，持久化登录态，提供 HTTP API 提取 Cookie 供采集程序使用。
+> **生产服务器**: `158.180.87.150` (Oracle Cloud ARM64)  
+> **域名**: `https://cookie.8tb.cc` (Caddy 反代 → cp-app:8080)  
+> **当前版本**: v0.5.0
 
-## 架构
+Selenium Grid 集群 + noVNC 人工登录账号池。在无 GUI 的 Linux 服务器上运行 Chrome
+浏览器，通过网页 (noVNC) 手动登录目标平台，持久化登录态，提供 HTTP API 提取 Cookie
+供采集程序使用。
+
+---
+
+## 生产架构
 
 ```
-┌── Docker Compose ──────────────────────────────────────┐
-│                                                         │
-│  cp-app (:8080)                cp-grid (standalone)     │
-│  ┌──────────────┐              ┌──────────────────┐    │
-│  │ FastAPI       │──http──────►│ Selenium Grid     │    │
-│  │ + React SPA   │  :4444     │ (hub+node+Chrome) │    │
-│  │               │              │                   │    │
-│  │ /api/accounts │              │ Xvfb + VNC + noVNC│   │
-│  │ /api/.../cookies            │ Chrome profiles   │    │
-│  └──────────────┘              └──────────────────┘    │
-│        │                              │                 │
-│        ▼                              ▼                 │
-│   ./data/ (SQLite + profiles)     ./data/profiles/     │
-└─────────────────────────────────────────────────────────┘
+                             Caddy (SSL termination)
+                              │
+          ┌───────────────────┼───────────────────────┐
+          │                   │                       │
+     cookie.8tb.cc    130.61.144.130           192.9.249.67
+     (158.180.87.150)  (Grid 130 standalone)   (Grid 192 standalone)
+          │
+┌─────────┴──────────────────────────────────────────┐
+│  Docker Compose (cookie-extract)                    │
+│                                                     │
+│  cp-hub (:4444)  ─── Selenium Hub ───┐              │
+│  cp-node-1 (7901)  Chrome node       │              │
+│  cp-node-2 (7902)  Chrome node       │  (同机节点)  │
+│  cp-app  (:8080)   FastAPI + React   │              │
+│                                                     │
+│  网络: cookie-extract_cp-network (172.30.0.0/16)    │
+│  ┌──────────────────────────────────────────────┐   │
+│  │ cp-hub    172.30.0.2                         │   │
+│  │ cp-node-1 172.30.0.3  (noVNC :7901)         │   │
+│  │ cp-node-2 172.30.0.4  (noVNC :7902)         │   │
+│  │ cp-app    172.30.0.5  (API :8080)            │   │
+│  │ caddy     172.30.0.6  (HTTPS :443)          │   │
+│  └──────────────────────────────────────────────┘   │
+│                                                     │
+│  外部 Grid（通过 Grid API 注册）：                  │
+│  - Server-130 (130.61.144.130:4444, noVNC :7900)    │
+│  - Server-192 (192.9.249.67:4444, noVNC :7900)      │
+└─────────────────────────────────────────────────────┘
 ```
 
-- **cp-app**: FastAPI 后端 + React SPA 前端，端口 8080
-- **cp-grid**: `selenium/standalone-chromium` 单容器 Grid，端口 4444（内部）+ 7901（noVNC）
-- **数据**: SQLite 数据库 + Chrome profiles 持久化在 `./data/`
+- **cp-app**: FastAPI 后端 + React SPA，端口 8080，多阶段 Docker 构建
+- **cp-hub**: `selenium/hub:latest`，会话路由中枢
+- **cp-node-1/2**: `selenium/node-chromium:latest`，各 1 个 Chrome slot，独立 VNC/noVNC
+- **Caddy**: SSL 自动签发 + 反向代理到 cp-app
+- **外部 Grid**: 远程 standalone Grid，通过 `/api/grids` 注册后使用
+
+---
 
 ## 前置条件
 
@@ -32,363 +57,391 @@ Selenium Grid + noVNC 人工登录账号池。在无 GUI 的 Linux 服务器上�
 |------|---------|------|
 | Docker | 20.10+ | |
 | Docker Compose | v2 (`docker compose`) | |
-| 内存 | 2 GB | Chrome 较吃内存 |
-| 磁盘 | 5 GB 可用 | Chrome profiles 每个约 50-200MB |
-| 网络 | 可访问 Docker Hub | 拉取镜像用 |
+| 内存 | 4 GB | Hub + 2 Node + App ≈ 3GB，建议 4GB+ |
+| 磁盘 | 10 GB 可用 | Chrome profiles 每个约 50-200MB |
+| 架构 | arm64 / amd64 | Oracle Cloud 为 ARM64 |
 
-支持架构：`linux/amd64`、`linux/arm64`（Apple Silicon / Oracle Cloud Ampere 等）。
+---
 
-## 快速部署（3 步）
+## 日常部署（推荐：rsync 增量同步）
 
-### 步骤 1：上传项目
-
-```bash
-# 在目标主机上
-cd /opt
-git clone <repo-url> cookie-pool   # 或 scp / rsync
-cd cookie-pool
-```
-
-### 步骤 2：部署
+从开发机推送到生产服务器：
 
 ```bash
-chmod +x deploy.sh
-./deploy.sh
+# —— 在开发机上执行 ——
+
+# 1. SSH 密钥（一次性配置）
+export SSH_KEY="$HOME/.ssh/id_rsa"   # 或指定路径
+export REMOTE="ubuntu@158.180.87.150"
+export PROJECT="/tmp/cookie-extract"
+
+# 2. 同步源码（排除 .git / data / node_modules）
+rsync -avz --delete \
+  -e "ssh -i $SSH_KEY -o StrictHostKeyChecking=no" \
+  --exclude '.git' --exclude 'data' --exclude 'node_modules' \
+  --exclude '__pycache__' --exclude '.pytest_cache' --exclude '*.pyc' \
+  --exclude '.env' \
+  . \
+  ${REMOTE}:${PROJECT}/
+
+# 3. 重建并重启
+ssh -i "$SSH_KEY" "$REMOTE" \
+  "cd ${PROJECT} && docker compose -f docker-compose.cluster.yml up -d --build app"
+
+# 4. 验证
+curl -s https://cookie.8tb.cc/health
+# → {"status":"ok","version":"0.5.0","database":"ok"}
 ```
 
-部署脚本会：
-1. 检查 Docker、内存、磁盘
-2. 自动检测或让你输入公网 IP
-3. 生成 `.env` 配置
-4. 拉取镜像并构建
-5. 启动所有服务
-6. 输出健康检查结果和访问地址
+> **注意**：rsync 务必排除 `.env` 和 `data/`，否则会覆盖生产配置和数据。
 
-### 步骤 3：验证
+---
+
+## 全新部署（从零开始）
+
+### 1. 上传项目
 
 ```bash
-# 健康检查
-curl http://localhost:8080/health
-# → {"status":"ok"}
+# 在目标服务器上
+mkdir -p /opt/cookie-pool
+cd /opt/cookie-pool
 
-# Grid 状态
-curl http://localhost:4444/status
-# → {"value":{"ready":true,...}}
+# Git clone（或 scp / rsync）
+git clone <repo-url> .
 ```
 
-浏览器打开 `http://<你的IP>:8080/` 即可访问 Web UI。
+### 2. 创建 .env
+
+```bash
+cat > .env << 'EOF'
+HOST_ADDRESS=158.180.87.150
+APP_PORT=8080
+NOVNC_PORT=7901
+API_KEY=<生成强密钥>
+VNC_PASSWORD=
+GRID_MAX_SESSIONS=1
+GRID_SESSION_TIMEOUT=300
+GRID_IMAGE=selenium/hub:latest
+DATA_DIR=./data
+EOF
+
+# 生成 API Key:
+#  openssl rand -hex 16
+```
+
+### 3. 创建数据目录
+
+```bash
+mkdir -p data/profiles data/artifacts
+```
+
+### 4. 构建并启动
+
+```bash
+# 集群模式（Hub + Node-1 + Node-2 + App）
+docker compose -f docker-compose.cluster.yml up -d --build
+
+# 单机模式（Standalone Chromium + App）
+docker compose up -d --build
+```
+
+### 5. 配置 Caddy 反代（可选）
+
+Caddyfile 片段（用于 `https://cookie.8tb.cc`）：
+
+```
+cookie.8tb.cc {
+    reverse_proxy 172.30.0.5:8080
+}
+```
+
+> **关键**：Caddy 必须加入 `cookie-extract_cp-network` 网络才能解析 `172.30.0.5`：
+> ```bash
+> docker network connect cookie-extract_cp-network caddy
+> ```
 
 ---
 
 ## 配置说明
 
-### `.env` 文件
+### `.env` 变量
 
 ```bash
-# 主机公网 IP（必填，用于生成 noVNC 访问链接）
-HOST_ADDRESS=1.2.3.4
-
-# 端口（默认即可）
-APP_PORT=8080       # Web UI
-NOVNC_PORT=7901     # noVNC 远程浏览器
-
-# API 密钥（自动生成）
-API_KEY=xxxxxxxxxxxxxxxxxxxxxxxx
-
-# VNC 密码（留空 = 无密码；设置后 noVNC 需密码）
-VNC_PASSWORD=
-
-# Grid 配置
-GRID_MAX_SESSIONS=1              # 最多同时几个浏览器（建议 1~3）
-GRID_SESSION_TIMEOUT=300         # 会话超时秒数
-GRID_IMAGE=selenium/standalone-chromium:latest
+HOST_ADDRESS=158.180.87.150    # 公网 IP 或域名
+APP_PORT=8080                  # Web UI 端口
+NOVNC_PORT=7901                # Node-1 noVNC 端口
+API_KEY=cookie-pool-158-2026   # API 认证密钥（所有 API 请求需带 X-API-Key）
+VNC_PASSWORD=                  # VNC 密码（空 = 不需要）
+GRID_MAX_SESSIONS=1            # 每个 Node 最多 1 个 session
+GRID_SESSION_TIMEOUT=300       # Grid 会话超时（秒）
+GRID_IMAGE=selenium/hub:latest # Hub 镜像
+DATA_DIR=./data                # 数据持久化目录
 ```
 
-### 部署参数
+### 多 Node 端口映射
+
+| Node | 容器名 | noVNC 端口 |
+|------|--------|-----------|
+| node-1 | cp-node-1 | 7901 |
+| node-2 | cp-node-2 | 7902 |
+| node-3 | cp-node-3 | 7903 |
+
+### 外部 Grid 注册
 
 ```bash
-./deploy.sh --host 1.2.3.4              # 指定 IP
-./deploy.sh --host 1.2.3.4 --port 9090  # 自定义端口
-./deploy.sh --novnc 7902                # 自定义 noVNC 端口
+curl -X POST https://cookie.8tb.cc/api/grids \
+  -H "X-API-Key: cookie-pool-158-2026" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Server-130",
+    "hub_url": "http://130.61.144.130:4444",
+    "novnc_base_url": "http://130.61.144.130:7900/vnc.html",
+    "max_sessions": 1
+  }'
 ```
+
+> 外部 Grid 需要 Profile 目录预创建（见下文「外部 Grid Profile 管理」）。
+
+---
+
+## 外部 Grid Profile 管理
+
+当 Session 绑定到外部 Grid（不同服务器）时，app 容器内的 `os.makedirs(profile_path)`
+只在 app 本地生效，远端 Grid 看不到。
+
+**每次创建新 Session 后、Start 之前，在 Grid 服务器上执行：**
+
+```bash
+# Profile 路径命名规则: session_<name>（名称小写、空格换下划线）
+sudo mkdir -p /path/to/profiles/session_<session-name>
+sudo chmod 777 /path/to/profiles/session_<session-name>
+```
+
+**同机 Node（cp-node-1/2）不需要此步骤** — 它们通过 Docker 卷共享
+`./data/profiles/`。
+
+---
+
+## API 认证
+
+所有 API 请求需携带 `X-API-Key` 头：
+
+```bash
+curl -H "X-API-Key: cookie-pool-158-2026" https://cookie.8tb.cc/api/accounts
+```
+
+Web UI 会自动从 `localStorage` 获取 API Key。
 
 ---
 
 ## 使用流程
 
-### 1. 创建账号
+### Session v2（推荐）
 
-Web UI → Accounts → **+ New Account**
+1. 创建 Session（绑定到某个 Grid Node）
+2. 绑定 Account 到 Session（Session 是一个 Chrome 浏览器，承载多个不同平台的账号）
+3. Start → noVNC 登录所有绑定的平台 → Complete
+4. 通过 `/api/sessions/{id}/cookies?platform=tiktok.com` 提取 cookie
 
-| 字段 | 示例 | 说明 |
+### 旧版 Account 流程（仍然可用）
+
+1. Web UI → Accounts → + New → 填写 name/platform/grid
+2. Login → noVNC 登录 → Login Complete
+3. 账号 status: `WAIT_LOGIN` → `LOGIN` → `ACTIVE`
+4. `/api/accounts/{id}/cookies/plain` 提取
+
+---
+
+## 后台守护进程
+
+| 组件 | 间隔 | 职责 |
 |------|------|------|
-| Account Name | `google_ads_01` | 唯一标识 |
-| Platform | `ads.google.com` | 目标网站域名 |
-| Grid | Default | 使用哪个 Grid 实例 |
+| **SessionWatchdog** | 30s | 守护 ACTIVE/LOGIN session driver 存活；死了自动 Grid 重连 → 完整重启 |
+| **SessionSweeper** | 60s | 回收超时登录会话；释放 IN_USE 泄漏锁（>15min → ACTIVE）|
+| **TaskWorker** | 事件驱动 | 异步执行 cookie 提取任务 |
+| **Scheduler** | 30s | Cron 定时调度 |
 
-### 2. 手动登录
+### Account 状态自动修复（v0.5.0+）
 
-点击 **Login** 按钮 → 弹出 noVNC 内嵌浏览器 → 在新标签页中打开 → 手动输入账号密码登录平台 → 回到页面点 **Login Complete**。
+```
+IN_USE > 15min  →  SessionSweeper 自动释放为 ACTIVE
+Session 重启     →  绑定 Account 退回 WAIT_LOGIN（手动 + watchdog 自动）
+Watchdog 恢复失败 →  绑定 Account 标记 LOGIN_EXPIRED
+```
 
-账号状态：`WAIT_LOGIN` → `LOGIN` → `ACTIVE`
-
-### 3. 提取 Cookie
+通过环境变量禁用后台守护（调试用）：
 
 ```bash
-# JSON 格式
-curl http://HOST:8080/api/accounts/1/cookies
-# → {"count":5,"cookie_string":"...","cookies":[{...}]}
-
-# 纯文本（可直接做 Cookie header）
-curl http://HOST:8080/api/accounts/1/cookies/plain
-# → SID=xxx; HSID=yyy; SSID=zzz
-
-# 按域名过滤
-curl "http://HOST:8080/api/accounts/1/cookies/plain?domain=google.com"
+CP_DISABLE_BACKGROUND=1 docker compose -f docker-compose.cluster.yml up -d
 ```
 
 ---
 
-## API 参考
-
-### 账号管理
-
-| 方法 | 端点 | 说明 |
-|------|------|------|
-| GET | `/api/accounts` | 列出所有账号 |
-| POST | `/api/accounts` | 创建账号 |
-| GET | `/api/accounts/{id}` | 获取账号详情 |
-| DELETE | `/api/accounts/{id}` | 删除账号 |
-
-### 登录流程
-
-| 方法 | 端点 | 说明 |
-|------|------|------|
-| POST | `/api/accounts/{id}/login` | 启动登录（创建浏览器会话） |
-| POST | `/api/accounts/{id}/login/complete` | 确认登录完成 |
-| POST | `/api/accounts/{id}/login/cancel` | 取消登录 |
-
-### Cookie 提取
-
-| 方法 | 端点 | 说明 |
-|------|------|------|
-| GET | `/api/accounts/{id}/cookies` | JSON 格式 cookie |
-| GET | `/api/accounts/{id}/cookies/plain` | 纯文本 cookie 字符串 |
-| `?domain=xxx` | | 按域名过滤 |
-
-### 其他
-
-| 端点 | 说明 |
-|------|------|
-| GET `/health` | 健康检查 |
-| GET `/api/grids` | Grid 实例管理 |
-| GET `/api/tasks` | 任务管理 |
-
----
-
-## 常用运维命令
+## 运维命令
 
 ```bash
+# 在 158 服务器上（ssh ubuntu@158.180.87.150）
+
+cd /tmp/cookie-extract
+
 # 查看状态
-docker compose ps
-docker compose logs -f              # 实时日志
-docker compose logs app --tail 50   # app 最近 50 行
+docker compose -f docker-compose.cluster.yml ps
 
-# 重启
-docker compose restart              # 重启所有
-docker compose restart app          # 只重启 app
-docker compose up -d --build app    # 重新构建 app
+# 查看日志
+docker compose -f docker-compose.cluster.yml logs -f --tail 100
+docker logs cp-app --tail 50
+docker logs cp-node-1 --tail 50
 
-# 停止/启动
-docker compose down                 # 停止并清除容器（数据不丢）
-docker compose up -d                # 重新启动
-docker compose down -v              # ⚠️ 清除容器+网络+卷（数据丢失！）
+# 只重启 app（代码更新后）
+docker compose -f docker-compose.cluster.yml up -d --build app
 
-# 更新 Grid 镜像
-docker compose pull grid
-docker compose up -d grid
+# 完全重建
+docker compose -f docker-compose.cluster.yml down
+docker compose -f docker-compose.cluster.yml up -d --build
 
-# 进入容器排查
+# 进入容器
 docker exec -it cp-app sh
-docker exec -it cp-grid bash
+docker exec -it cp-hub bash
 
-# 查看 Grid 状态
-curl http://localhost:4444/status | python3 -m json.tool
+# 数据库操作
+docker exec cp-app sqlite3 /data/accounts.db ".tables"
+docker exec cp-app sqlite3 /data/accounts.db "SELECT id,name,status FROM accounts;"
+
+# 健康检查
+curl http://localhost:8080/health
+curl -s http://localhost:4444/status | python3 -m json.tool
+
+# 删除 Grid 僵尸 session
+docker exec cp-app python3 -c "
+from database import SessionLocal
+from models import GridInstance
+db = SessionLocal()
+g = db.query(GridInstance).filter_by(id=3).first()
+# 在 Grid 服务器上: docker restart cp-grid 或 docker exec ... rm session
+"
 ```
+
+---
+
+## 容器和端口一览
+
+| 容器 | 端口 | 说明 |
+|------|------|------|
+| cp-app | 8080 | FastAPI + React SPA |
+| cp-hub | 4444 | Selenium Hub（内部）|
+| cp-node-1 | 7901 | Chrome node，noVNC |
+| cp-node-2 | 7902 | Chrome node，noVNC |
+| cp-node-3 | 7903 | Chrome node（停止，profile 启动）|
+| caddy | 80, 443 | SSL 反代 |
 
 ---
 
 ## 数据备份
 
-所有持久化数据在 `./data/` 目录：
-
-```
-data/
-├── accounts.db              # SQLite 数据库（账号、Grid、任务记录）
-└── profiles/                # Chrome profiles（每个账号一个目录）
-    ├── account_google_ads_01/
-    └── account_youtube_01/
-```
-
-**备份**：
 ```bash
-tar czf cookie-pool-backup-$(date +%Y%m%d).tar.gz data/
-```
+# 在 158 上
+cd /tmp/cookie-extract
+tar czf cookie-pool-backup-$(date +%Y%m%d-%H%M).tar.gz data/
 
-**恢复**：
-```bash
-tar xzf cookie-pool-backup-YYYYMMDD.tar.gz
+# 恢复到另一台机器
+tar xzf cookie-pool-backup-*.tar.gz
+docker compose -f docker-compose.cluster.yml up -d --build
 ```
 
 ---
 
 ## 故障排查
 
-### Grid 状态异常
+### cp-app 启动失败
 
 ```bash
-# 查看 Grid 容器日志
-docker logs cp-grid --tail 50
-
-# 重启 Grid
-docker compose restart grid
+docker logs cp-app --tail 50
+# 常见：.env 缺失、GRID_URL 不可达、DATA_DIR 权限
 ```
 
-### Chrome 崩溃 / tab crash
+### Grid Node 无反应
 
 ```bash
-# 检查内存
+docker logs cp-node-1 --tail 30
+# 常见：内存不足、shm_size 太小、session 超时未释放
+```
+
+### Grid 僵尸 session 阻塞 Node
+
+每个 Node 只有 1 slot。僵尸 session 会永久占用：
+
+```bash
+# 在 158 上重启对应 Node
+docker compose -f docker-compose.cluster.yml restart node-1
+
+# 或在远程 Grid 上删除僵尸容器
+# 130: docker restart cp-grid
+# 192: sudo docker restart <grid-container>
+```
+
+### Caddy 502
+
+```bash
+# Caddy 必须在 cp-network 内
+docker network inspect cookie-extract_cp-network | grep -A2 caddy
+
+# 如果不在，加入：
+docker network connect cookie-extract_cp-network caddy
+
+# Caddyfile 中 reverse_proxy 用 IP 而非容器名（隔离网络 DNS 不可达）：
+#   reverse_proxy 172.30.0.5:8080
+```
+
+### noVNC 白屏或无法交互
+
+```bash
+# 确认 node 的 VNC 启用
+docker exec cp-node-1 sh -c "ps aux | grep x11vnc"
+
+# 检查 noVNC 端口
+curl -s http://localhost:7901 | head -5
+```
+
+### Chrome 崩溃 / Out of Memory
+
+```bash
 free -h
+# 如果内存不足：关闭 node-3，减少并发 Node
 
-# 增加 shm_size（docker-compose.yml 中已设 2gb）
-# 如果还崩溃，检查 docker 内存限制
-
-# 清除残留 Chrome 锁
-docker exec cp-grid sh -c "rm -f /tmp/.com.google.Chrome.* /tmp/Singleton*"
-```
-
-### noVNC 无法连接
-
-1. 检查 VNC 进程：`docker exec cp-grid sh -c "ps aux | grep x11vnc"`
-2. 确认 `-viewonly` 不在参数中
-3. 确认端口映射：`docker port cp-grid`
-
-### 账号登录后 cookie 为空
-
-- 确认账号 status 为 `ACTIVE`
-- 确认 platform 字段是正确的域名（不是中文/乱码）
-- 如果 platform 错误：Web UI 中编辑账号修正
-
-### 镜像拉取慢
-
-```bash
-# 使用镜像加速器（阿里云/中科大等）
-# 编辑 /etc/docker/daemon.json:
-{
-  "registry-mirrors": ["https://docker.m.daocloud.io"]
-}
-sudo systemctl restart docker
+# 增加 shm_size（docker-compose.cluster.yml）：
+#   shm_size: "4gb"
 ```
 
 ---
 
-## 多实例部署
-
-同一台机器部署多个 cookie-pool 实例（不同端口）：
+## 开发环境
 
 ```bash
-# 实例 1
-cp -r cookie-pool cookie-pool-1
-cd cookie-pool-1
-# 编辑 .env: APP_PORT=8080 NOVNC_PORT=7901
-./deploy.sh
+# 本地开发
+cd cookie-pool
 
-# 实例 2
-cp -r cookie-pool cookie-pool-2
-cd cookie-pool-2
-# 编辑 .env: APP_PORT=8081 NOVNC_PORT=7902
-./deploy.sh
-```
+# 后端
+cd app
+pip install -r requirements.txt
+uvicorn main:app --reload --port 8080
 
-> 注意：两个实例使用独立的 `data/` 目录，互不影响。
+# 前端
+cd frontend-react
+npm install
+npm run dev   # Vite HMR on :5173
 
----
-
-## 接入外部 Grid（跨服务器）
-
-Grid 与 cookie-pool 不在同一服务器时，需要额外处理 profile 目录。
-
-### ⚠ 限制：Profile 目录需预创建
-
-cookie-pool 的 `os.makedirs(profile_path)` 在 **app 容器本地**执行，远端 Grid 服务器**看不到**这个目录。Chrome 通过 `--user-data-dir` 指向的路径必须在 Grid 服务器上实际存在且可写。
-
-**每次创建新 Session 后、Start 之前，在 Grid 服务器上执行：**
-
-```bash
-# profile 命名规则: session_<name>（名称小写，空格换下划线）
-sudo mkdir -p <profiles-dir>/session_<session-name>
-sudo chmod 777 <profiles-dir>/session_<session-name>
-```
-
-**示例**（Session 名为 `ad-pool-01`，Grid 在 192.9.249.67）：
-
-```bash
-ssh ubuntu@192.9.249.67
-sudo mkdir -p /home/ubuntu/grid-standalone/profiles/session_ad-pool-01
-sudo chmod 777 /home/ubuntu/grid-standalone/profiles/session_ad-pool-01
-```
-
-> **不影响同机 Grid**：同一 Docker 主机上的 hub+node 集群共享 `./data/profiles` 数据卷，app 创建的目录直接可见，无需预创建。
-
-### 注册外部 Grid
-
-```bash
-curl -X POST http://<cookie-pool>:8080/api/grids \
-  -H "X-API-Key: <api-key>" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "Grid-192",
-    "hub_url": "http://192.9.249.67:4444",
-    "novnc_base_url": "http://192.9.249.67:7900/vnc.html",
-    "max_sessions": 1
-  }'
-```
-
-创建 Session 时选择对应的 Node（grid_id），Start 后通过 noVNC 在远端浏览器登录。
-
----
-
-## 从旧版升级（seleniarm hub+node → standalone）
-
-如果之前使用 `seleniarm/hub` + `seleniarm/node-chromium` 部署：
-
-```bash
-# 1. 停止旧容器
-docker stop cp-hub cp-chrome cp-app
-docker rm cp-hub cp-chrome cp-app
-
-# 2. 更新 db 中的 grid hub_url
-docker compose up -d --build
-docker exec cp-app python3 -c "
-from database import SessionLocal
-from models import GridInstance
-db = SessionLocal()
-for g in db.query(GridInstance).all():
-    if 'selenium-hub' in g.hub_url:
-        g.hub_url = 'http://grid:4444'
-        print(f'Updated grid {g.id}')
-db.commit()
-"
+# Docker 构建（不启动 Grid）
+docker compose -f docker-compose.cluster.yml build app
 ```
 
 ---
 
 ## 版本历史
 
-| 版本 | 日期 | 变更 |
-|------|------|------|
-| 0.5.0 | 2026-08 | 切换为 standalone-chromium 单容器 Grid；新增 Cookie API；反检测加强 |
-| 0.4.0 | 2026-08 | 多 Grid 支持；登录 session 持久化修复 |
+| 版本 | 日期 | 关键变更 |
+|------|------|---------|
+| 0.5.0 | 2026-08 | SessionWatchdog 自动恢复；Account 状态修复（IN_USE 泄漏、restart 联动、LOGIN_EXPIRED）；Grid 重连清理孤儿 session |
+| 0.4.0 | 2026-08 | Session v2（常驻浏览器）；多 Grid 支持；登录 session 持久化修复 |
 | 0.3.0 | 2026-08 | VNC viewonly 修复；noVNC iframe 大屏化 |
 | 0.2.0 | 2026-08 | React SPA 前端 |
 | 0.1.0 | 2026-08 | 初始版本：FastAPI + seleniarm hub/node |

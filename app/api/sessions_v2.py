@@ -348,6 +348,14 @@ def restart_session(session_id: int, db: DBSession = Depends(get_db)):
         s.status = "LOGIN"
         s.closed_at = None
         db.commit()
+
+        # 重启后浏览器需要重新确认登录 → 绑定 account 退回 WAIT_LOGIN
+        for sa in s.accounts:
+            acc = sa.account
+            if acc and acc.status in ("ACTIVE", "IN_USE"):
+                AccountService.set_status(db, acc, "WAIT_LOGIN")
+                logger.info(f"Account {acc.id} ({acc.name}) → WAIT_LOGIN (session {session_id} restarted)")
+
         logger.info(f"Session {session_id} restarted (profile={s.profile_path})")
     except Exception as e:
         _close_driver(session_id)

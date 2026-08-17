@@ -135,6 +135,22 @@ class AccountService:
             db.commit()
 
     @staticmethod
+    def release_stale_locks(db: Session, timeout_minutes: int = 15) -> int:
+        """Release accounts stuck in IN_USE for too long (e.g. process crash)."""
+        from datetime import timedelta
+        cutoff = datetime.now(timezone.utc) - timedelta(minutes=timeout_minutes)
+        stale = db.query(Account).filter(
+            Account.status == "IN_USE",
+            Account.last_used_at < cutoff,
+        ).all()
+        for acc in stale:
+            AccountService.set_status(db, acc, "ACTIVE")
+            logger.warning(f"Released stale IN_USE lock on account {acc.id} ({acc.name})")
+        if stale:
+            logger.info(f"Released {len(stale)} stale IN_USE lock(s)")
+        return len(stale)
+
+    @staticmethod
     def mark_logged_in(db: Session, account: Account) -> None:
         AccountService.set_status(db, account, "ACTIVE")
         account.last_login_at = datetime.now(timezone.utc)

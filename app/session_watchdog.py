@@ -175,11 +175,29 @@ class SessionWatchdog:
             s.grid_session_id = driver.session_id
             if s.status == "ACTIVE":
                 s.status = "LOGIN"  # 重启后需要重新确认登录态
+                # 标记绑定 account 为 WAIT_LOGIN
+                from services.account_service import AccountService
+                for sa in s.accounts:
+                    acc = sa.account
+                    if acc and acc.status in ("ACTIVE", "IN_USE"):
+                        AccountService.set_status(db, acc, "WAIT_LOGIN")
+                        logger.info(f"Account {acc.id} ({acc.name}) → WAIT_LOGIN (session {s.id} restarted by watchdog)")
             db.commit()
 
             logger.info(f"Watchdog restarted session {s.id} ({s.name}) — status → LOGIN")
             return True
         except Exception as e:
+            # 彻底失败 → 标记绑定 account 为 LOGIN_EXPIRED
+            try:
+                from services.account_service import AccountService
+                for sa in s.accounts:
+                    acc = sa.account
+                    if acc and acc.status in ("ACTIVE", "IN_USE", "WAIT_LOGIN"):
+                        AccountService.mark_login_expired(db, acc.id)
+                        logger.warning(f"Account {acc.id} ({acc.name}) → LOGIN_EXPIRED (session {s.id} recovery failed)")
+                db.commit()
+            except Exception as ae:
+                logger.error(f"Failed to mark accounts expired for session {s.id}: {ae}")
             logger.error(f"Watchdog full restart failed for session {s.id}: {e}")
             return False
 
