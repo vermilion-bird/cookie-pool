@@ -2,24 +2,41 @@ import os
 from sqlalchemy import create_engine, event, inspect, text
 from sqlalchemy.orm import sessionmaker, DeclarativeBase
 
-from config import DB_PATH
+from config import DB_PATH, DATABASE_URL
 
 os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
 
-engine = create_engine(f"sqlite:///{DB_PATH}", echo=False, connect_args={"check_same_thread": False})
+if DATABASE_URL:
+    # ── PostgreSQL ──
+    engine = create_engine(
+        DATABASE_URL,
+        echo=False,
+        pool_size=5,
+        max_overflow=10,
+        pool_pre_ping=True,
+    )
+    _is_postgres = True
+else:
+    # ── SQLite ──
+    engine = create_engine(
+        f"sqlite:///{DB_PATH}",
+        echo=False,
+        connect_args={"check_same_thread": False},
+    )
+    _is_postgres = False
+
+    @event.listens_for(engine, "connect")
+    def _set_sqlite_pragmas(dbapi_connection, connection_record):
+        """WAL 提升多线程并发读写；busy_timeout 缓解写锁竞争；外键保证级联删除。"""
+        cursor = dbapi_connection.cursor()
+        try:
+            cursor.execute("PRAGMA journal_mode=WAL")
+            cursor.execute("PRAGMA busy_timeout=5000")
+            cursor.execute("PRAGMA foreign_keys=ON")
+        finally:
+            cursor.close()
+
 SessionLocal = sessionmaker(bind=engine, autoflush=False)
-
-
-@event.listens_for(engine, "connect")
-def _set_sqlite_pragmas(dbapi_connection, connection_record):
-    """WAL 提升多线程并发读写；busy_timeout 缓解写锁竞争；外键保证级联删除。"""
-    cursor = dbapi_connection.cursor()
-    try:
-        cursor.execute("PRAGMA journal_mode=WAL")
-        cursor.execute("PRAGMA busy_timeout=5000")
-        cursor.execute("PRAGMA foreign_keys=ON")
-    finally:
-        cursor.close()
 
 
 class Base(DeclarativeBase):
@@ -28,10 +45,9 @@ class Base(DeclarativeBase):
 
 def init_db():
     """Initialize database: create tables if not exist, run migrations."""
-    from models import GridInstance, Account, BrowserSession, Session, SessionAccount, Task  # noqa: F401
+    from models import GridInstance, Account, BrowserSession, Session, SessionAccount, Task, AuditLog  # noqa: F401
     Base.metadata.create_all(bind=engine)
 
-    # ── Schema migrations ──
     inspector = inspect(engine)
     existing_columns = {col["name"] for col in inspector.get_columns("accounts")}
 
@@ -59,7 +75,12 @@ def init_db():
     for col, ddl in task_adds.items():
         if col not in task_cols:
             with engine.connect() as conn:
-                conn.execute(text(f"ALTER TABLE tasks ADD COLUMN {col} {ddl}"))
+                # PostgreSQL uses different DDL for defaults
+                if _is_postgres:
+                    default_val = "0" if "INTEGER" in ddl else "30" if "30" in ddl else "'[]'"
+                    conn.execute(text(f"ALTER TABLE tasks ADD COLUMN {col} {ddl.replace('INTEGER', 'INTEGER').replace('TEXT', 'TEXT')} DEFAULT {default_val}"))
+                else:
+                    conn.execute(text(f"ALTER TABLE tasks ADD COLUMN {col} {ddl}"))
                 conn.commit()
 
     # Auto-create default grid instance if the grid table is empty
@@ -78,14 +99,6 @@ def init_db():
             )
             db.add(default)
             db.commit()
-
-    # Add audit_logs table (migration to v0.5.1)
-    existing_tables = inspector.get_table_names()
-    if "audit_logs" not in existing_tables:
-        AuditLog = None  # will be imported from models
-        from models import AuditLog as _AuditLog
-        _AuditLog.__table__.create(bind=engine)
-
 
 
 def get_db():

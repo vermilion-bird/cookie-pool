@@ -11,6 +11,7 @@ NOVNC_PORT = os.getenv("NOVNC_PORT", "7900")
 # 数据目录
 DATA_DIR = os.getenv("DATA_DIR", "/data")
 DB_PATH = os.path.join(DATA_DIR, "accounts.db")
+DATABASE_URL = os.getenv("DATABASE_URL", "")  # 为空则使用 SQLite；设为 postgresql://... 则使用 PostgreSQL
 PROFILES_DIR = os.path.join(DATA_DIR, "profiles")
 ARTIFACTS_DIR = os.path.join(DATA_DIR, "artifacts")
 
