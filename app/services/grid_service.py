@@ -244,9 +244,9 @@ class GridService:
     @staticmethod
     def probe(grid_url: str) -> dict:
         """
-        探测 Grid 实例是否健康。
-        Hub 用 /wd/hub/status，Node/Standalone 用 /status，自动回退。
-        返回 {"status": "ONLINE"|"OFFLINE"|"ERROR", "nodes": int, "ready": bool, "message": str}
+        探测 Grid 实例是否可达。
+        ready=True 表示有空闲 slot 可接收新会话；ready=False 表示可达但 slot 已满。
+        返回 {"status": "ONLINE"|"OFFLINE", "nodes": int, "ready": bool, "message": str}
         """
         import urllib.request
         import json
@@ -259,14 +259,18 @@ class GridService:
                 data = json.loads(resp.read().decode())
                 value = data.get("value", {})
                 ready = value.get("ready", False)
-                nodes_list = value.get("value", {}).get("nodes", [])
+                # Standalone: nodes 在 value 顶层；Hub: nodes 在 value.value 内
+                nodes_list = value.get("nodes", [])
+                if not nodes_list:
+                    nodes_list = value.get("value", {}).get("nodes", [])
                 node_count = len(nodes_list) if isinstance(nodes_list, list) else 0
-                if ready:
-                    return {"status": "ONLINE", "nodes": node_count, "ready": True,
-                            "message": "Ready"}
-                else:
-                    return {"status": "ERROR", "nodes": node_count, "ready": False,
-                            "message": "Grid not ready"}
+                # Grid 可达即 ONLINE；ready 反映是否有空闲 slot
+                return {
+                    "status": "ONLINE",
+                    "nodes": node_count,
+                    "ready": ready,
+                    "message": "Ready" if ready else f"Online (no free slots, {node_count} node(s))",
+                }
             except Exception:
                 continue
         return {"status": "OFFLINE", "nodes": 0, "ready": False,
@@ -294,12 +298,17 @@ class GridService:
                                 if slot.get("session"):
                                     total += 1
                         return total
-                    # Standalone mode: check if there's a session
-                    ready = value.get("ready", False)
+                    # Standalone mode: check slot occupancy
                     nodes_list = value.get("nodes", [])
                     if nodes_list:
-                        return len([n for n in nodes_list if n.get("session")])
-                    return 0 if ready else -1
+                        occupied = 0
+                        for n in nodes_list:
+                            slots = n.get("slots", [])
+                            for slot in slots:
+                                if slot.get("session"):
+                                    occupied += 1
+                        return occupied
+                    return 0
                 except Exception:
                     continue
         except Exception as e:
