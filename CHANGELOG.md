@@ -6,14 +6,47 @@
 
 ## [Unreleased]
 
-### 规划中（Phase 3 — 规模化与多用户，目标 v0.5.x）
+### 规划中（v0.5.1+ — Phase 3 补全）
 
+- 列表分页与服务端过滤（Accounts / Tasks / Schedules）
 - 多 Grid 容量感知调度与自动放置
 - 数据库升级路径（SQLite → PostgreSQL 可选）
-- 列表分页与服务端过滤
-- 结构化日志 / Prometheus 指标 / 审计日志
+- 审计日志表
+- 结构化日志 / 请求 ID / Prometheus 指标
 - RBAC 多用户（JWT）与团队隔离
-- 账号导入导出与备份恢复
+
+### 规划中（v0.6.x+ — Phase 4 智能化）
+
+- 登录健康巡检与自愈（掉线自动发现 + 半自动重登）
+- 代理池对接（HTTP/SOCKS5 per-account）
+- 指纹模板配置化（UA/时区/语言/WebGL per-account）
+- 对外 Python/Node SDK + CLI 增强
+- 插件市场 / 自定义执行器 SDK
+
+## [0.5.0] - 2026-08-14 — Phase 3 规模化：Session v2 + 集群 + 反检测
+
+### Added
+
+- **Session v2 常驻浏览器架构**：`Session` + `SessionAccount` 模型，一个 Chrome 承载多平台 Account（N:N 绑定），通过 noVNC 统一登录后按平台提取 Cookie
+- **Session Watchdog**（`app/session_watchdog.py`）：30s 周期探测 driver 存活，死 driver 自动 Grid 重连（复用 profile）或完整重启
+- **多节点集群部署**：`docker-compose.cluster.yml` + `cluster.sh`，Hub + 3 Node 各绑定专属账号，外部 Grid 通过 `/api/grids` 注册
+- **Standalone Grid 部署**：`grid-standalone/` — 单容器全合一 Selenium Grid（hub+node+Chrome+VNC+noVNC）
+- **反检测注入**（`grid_service.py`）：CDP 脚本覆盖 webdriver / plugins / languages / WebGL / permissions 等检测点
+- **UA 池随机旋转**：Windows/macOS Chrome 130+ 共 6 个真实 User-Agent
+- **Chrome 反自动化标志位**：`--disable-blink-features=AutomationControlled` + `excludeSwitches`
+- **Cookie API**：`GET /api/sessions/{id}/cookies`（JSON）+ `/cookies/plain`（Netscape），按 platform/domain 过滤
+- **`cp` CLI 工具**：`cp list/get/session`，支持 `--plain` / `--domain` / `--platform`
+- **DSh skill 集成**：`.dsh/skills/cookie-pool/SKILL.md`
+- **前端 Sessions 页面**（路由 `/sessions`）：创建 / 列表 / 详情 / 绑定账号 / 登录 / 完成 / 取消 / 重启 / 健康轮询
+- 账号 `last_used_at` + IN_USE 锁泄漏自动释放
+- Session 重启 → 绑定 Account 退回 WAIT_LOGIN
+- 生产部署文档重写（Caddy 反代 + rsync 增量同步 + 外部 Grid Profile 管理）
+
+### Changed
+
+- Login 流程从 Account 页面迁移到 Sessions 页面（Session v2 统一承载）
+- `grid_service.py` create_driver 全面重构：反检测 + UA 池 + CDP 注入
+- 版本号 `0.5.0`（前后端对齐）
 
 ## [0.4.0] - 2026-08-14 — Phase 2 自动化闭环
 

@@ -1,9 +1,10 @@
 # Cookie Pool — 后续迭代路线图（Roadmap）
 
-> 版本基线：**v0.3.0**（2026-08-14，commit `55c8e80` + Phase 1 实施提交）
-> 本文档是项目的长期迭代规划，每完成一个阶段后回更新版本号与状态。
+> 版本基线：**v0.5.0**（2026-08-14，commit `5c3c037`）
+> 本文档是项目的长期迭代规划，每完成一个阶段后更新版本号与状态。
 > **Phase 1（v0.3.x）已于 2026-08-14 实施完成 ✅**
-> **Phase 2（v0.4.x）已于 2026-08-14 实施完成 ✅**，详见下方 Phase 2 各条目勾选状态。
+> **Phase 2（v0.4.x）已于 2026-08-14 实施完成 ✅**
+> **Phase 3（v0.5.x）部分完成 ⚡** — Session v2 / 集群 / 反检测 / Cookie API 已交付；智能调度 / PostgreSQL / 分页 / RBAC 待补全。
 
 ---
 
@@ -66,7 +67,7 @@
 |------|---------|------|---------|------|
 | **Phase 1** | v0.3.0 ✅ | 根基加固：安全 / 异步执行 / 可靠性 | 系统可安全上线、任务不阻塞、有测试兜底 | ✅ 已完成 |
 | **Phase 2** | v0.4.0 ✅ | 自动化闭环：调度 / 模板 / 通知 | 从"手动跑任务"进化到"定时自动跑" | ✅ 已完成 |
-| **Phase 3** | v0.5.x | 规模化：多 Grid 调度 / 可观测 / 多用户 | 支撑上百账号、多 Grid 集群、多人协作 | ⬜ 未开始 |
+| **Phase 3** | v0.5.x | 规模化：多 Grid 调度 / 可观测 / 多用户 | 支撑上百账号、多 Grid 集群、多人协作 | ⚡ 部分完成 |
 | **Phase 4** | v0.6+ | 智能化与生态：健康巡检 / 反检测 / SDK | 账号自愈、指纹管理、生态集成 | ⬜ 规划中 |
 
 ---
@@ -160,34 +161,45 @@
 
 > 一句话：**支撑上百账号、多 Grid 集群与团队协作。**
 
-#### 3.1 多 Grid 智能调度
-- 容量感知：按 `grid.max_sessions` 与实时占用（Grid API 的 session 数）选择放置节点；账号锁升级为"账号 + Grid 容量"双重约束。
-- 会话放置失败自动换 Grid 重试。
-- Grid 状态从手动 `check` 改为后台周期探测 + Dashboard 实时展示。
+#### 3.1 多 Grid 智能调度 ⚡ 部分完成
+- ✅ 多节点集群：`docker-compose.cluster.yml` + `cluster.sh`，Hub + 3 Node 各绑定专属账号
+- ✅ Standalone Grid 部署：`grid-standalone/` 单容器全合一
+- ✅ 外部 Grid 注册：通过 `/api/grids` CRUD 注册远程 Grid 实例
+- ✅ Grid 周期探测：`GridService.probe()` 支持 Hub/Standalone 双模式
+- ⬜ 容量感知调度：按 `grid.max_sessions` + 实时占用选择放置节点，会话放置失败自动换 Grid 重试
 
-#### 3.2 数据库升级路径
+#### 3.2 ⭐ Session v2 — 常驻浏览器架构 ✅ 已完成
+- ✅ `Session` + `SessionAccount` 模型：N:N 绑定，一个 Chrome 承载多平台 Account
+- ✅ Session 生命周期管理：Create / Start Login / Complete / Cancel / Restart / Delete
+- ✅ Session Watchdog：30s 周期探测 driver 存活，死 driver 自动 Grid 重连或完整重启
+- ✅ Cookie 按平台提取：`GET /api/sessions/{id}/cookies` + Netscape 格式
+- ✅ `cp` CLI 脚本：`cp list/get/session`，支持 `--plain` / `--domain` / `--platform`
+- ✅ 前端 Sessions 页面：创建 / 详情 / 绑定账号 / 健康状态轮询
+
+#### 3.3 反检测基础设施 ✅ 已完成
+- ✅ CDP 脚本注入：覆盖 webdriver / plugins / languages / WebGL / permissions 等检测点
+- ✅ UA 池随机旋转：Windows/macOS Chrome 130+ 共 6 个 UA
+- ✅ Chrome 反自动化标志位：`--disable-blink-features=AutomationControlled`
+
+#### 3.4 数据库升级路径 ⬜ 未开始
 - 抽象数据访问层，支持 SQLite（默认）与 PostgreSQL（可选 `DATABASE_URL`）双后端；提供迁移脚本。
 - `with_for_update()` 行锁在 PostgreSQL 下真正生效，解决 T9 的并发锁问题。
 
-#### 3.3 列表分页与性能（T11）
+#### 3.5 列表分页与性能（T11）⬜ 未开始
 - `/api/accounts`、`/api/tasks`、`/api/schedules` 支持 `page/page_size` + 服务端过滤（status/platform/type）。
 - 前端列表接入分页与虚拟滚动，Dashboard 统计改为聚合查询。
 
-#### 3.4 可观测性（T10）
+#### 3.6 可观测性（T10）⬜ 未开始
 - 结构化日志（JSON lines）+ 请求 ID 贯穿。
 - 指标：账号状态分布、任务成功率/耗时、Grid 利用率（Prometheus 格式 `/metrics` 端点，或先做内置统计页）。
 - 审计日志表：记录账号创建/删除/登录/任务操作（操作人 + 时间 + 结果），支撑追责与合规。
 
-#### 3.5 RBAC 与多用户
+#### 3.7 RBAC 与多用户 ⬜ 未开始
 - 在 Phase 1 认证基础上升级：用户表 + 角色（admin / operator / viewer），JWT 登录。
 - 账号/Grid 可归属团队，权限隔离。
 - 前端登录页与用户菜单。
 
-#### 3.6 账号导入导出与备份
-- 账号元数据 CSV/JSON 导入导出（不含 Profile 本体，Profile 通过备份机制处理）。
-- 备份：profiles 增量备份（rsync/tar 定时）+ DB 快照，一键恢复流程文档化。
-
-**Phase 3 完成标志**：100+ 账号在多 Grid 上稳定运行；关键操作有审计；多用户权限生效；`v0.5.0` 打 tag。
+**Phase 3 完成标志（部分达成）**：Session v2 架构上线 ✅；集群部署就绪 ✅；反检测注入生效 ✅；待补全：智能调度 / 分页 / PostgreSQL / 审计 / RBAC；`v0.5.0` 已打 tag。
 
 ---
 
