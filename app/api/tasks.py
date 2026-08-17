@@ -96,9 +96,32 @@ def create_task(data: TaskCreate, db: Session = Depends(get_db)):
 
 
 @router.get("")
-def list_tasks(db: Session = Depends(get_db)):
-    tasks = TaskService.get_all(db)
-    return {"tasks": [t.to_dict() for t in tasks]}
+def list_tasks(
+    page: int = 1,
+    page_size: int = 20,
+    status: str = None,
+    type: str = None,
+    account_id: int = None,
+    db: Session = Depends(get_db),
+):
+    query = db.query(Task)
+    if status:
+        query = query.filter(Task.status == status)
+    if type:
+        query = query.filter(Task.type == type)
+    if account_id is not None:
+        query = query.filter(Task.account_id == account_id)
+    total = query.count()
+    total_pages = max(1, (total + page_size - 1) // page_size)
+    offset = (page - 1) * page_size
+    tasks = query.order_by(Task.created_at.desc()).offset(offset).limit(page_size).all()
+    return {
+        "tasks": [t.to_dict() for t in tasks],
+        "page": page,
+        "page_size": page_size,
+        "total": total,
+        "total_pages": total_pages,
+    }
 
 
 @router.get("/{task_id}")

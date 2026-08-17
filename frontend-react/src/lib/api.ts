@@ -2,6 +2,8 @@ import type {
   Account, Task, Schedule, TaskTypeMeta,
   LoginStartResponse, LoginCompleteResponse, GridInstance, GridCheckResult,
   SessionV2, SessionV2Account, SessionHealth,
+  AccountListResponse, TaskListResponse, ScheduleListResponse,
+  AccountListParams, TaskListParams, ScheduleListParams,
 } from '@/types'
 
 const API_KEY_STORAGE = 'cp_api_key'
@@ -49,11 +51,21 @@ async function upload<T>(url: string, file: File): Promise<T> {
   return data as T
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function qs(params: Record<string, any>): string {
+  const p = new URLSearchParams()
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== null && v !== '') p.set(k, String(v))
+  }
+  const s = p.toString()
+  return s ? '?' + s : ''
+}
+
 export const api = {
   health: () => request<{ status: string; version: string; database: string }>('/health'),
 
   accounts: {
-    list: () => request<{ accounts: Account[] }>('/api/accounts'),
+    list: (params?: AccountListParams) => request<AccountListResponse>('/api/accounts' + qs(params ?? {})),
     get: (id: number) => request<{ account: Account }>(`/api/accounts/${id}`),
     create: (payload: { name: string; platform: string; notes?: string; grid_id?: number | null; login_indicator?: string | null }) =>
       request<{ account: Account }>('/api/accounts', {
@@ -94,7 +106,7 @@ export const api = {
   },
 
   tasks: {
-    list: () => request<{ tasks: Task[] }>('/api/tasks'),
+    list: (params?: TaskListParams) => request<TaskListResponse>('/api/tasks' + qs(params ?? {})),
     get: (id: number) => request<{ task: Task }>(`/api/tasks/${id}`),
     types: () => request<{ types: TaskTypeMeta[] }>('/api/tasks/meta/types'),
     create: (payload: { account_id: number; type: string; params?: string; max_retries?: number; retry_delay_seconds?: number }) =>
@@ -117,7 +129,7 @@ export const api = {
   },
 
   schedules: {
-    list: () => request<{ schedules: Schedule[] }>('/api/schedules'),
+    list: (params?: ScheduleListParams) => request<ScheduleListResponse>('/api/schedules' + qs(params ?? {})),
     get: (id: number) => request<{ schedule: Schedule }>(`/api/schedules/${id}`),
     create: (payload: { name: string; cron: string; task_type: string; params?: string; account_id?: number | null; enabled?: boolean }) =>
       request<{ schedule: Schedule }>('/api/schedules', {

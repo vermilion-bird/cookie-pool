@@ -59,9 +59,32 @@ def _check_account(db: Session, account_id: int | None) -> None:
 
 
 @router.get("")
-def list_schedules(db: Session = Depends(get_db)):
-    schedules = db.query(Schedule).order_by(Schedule.id).all()
-    return {"schedules": [s.to_dict() for s in schedules]}
+def list_schedules(
+    page: int = 1,
+    page_size: int = 20,
+    enabled: bool = None,
+    task_type: str = None,
+    account_id: int = None,
+    db: Session = Depends(get_db),
+):
+    query = db.query(Schedule)
+    if enabled is not None:
+        query = query.filter(Schedule.enabled == enabled)
+    if task_type:
+        query = query.filter(Schedule.task_type == task_type)
+    if account_id is not None:
+        query = query.filter(Schedule.account_id == account_id)
+    total = query.count()
+    total_pages = max(1, (total + page_size - 1) // page_size)
+    offset = (page - 1) * page_size
+    schedules = query.order_by(Schedule.id.desc()).offset(offset).limit(page_size).all()
+    return {
+        "schedules": [s.to_dict() for s in schedules],
+        "page": page,
+        "page_size": page_size,
+        "total": total,
+        "total_pages": total_pages,
+    }
 
 
 @router.post("")

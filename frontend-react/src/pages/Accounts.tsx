@@ -136,6 +136,8 @@ export function Accounts() {
   const toast = useToast()
   const queryClient = useQueryClient()
   const [filter, setFilter] = useState<FilterValue>('ALL')
+  const [page, setPage] = useState(1)
+  const pageSize = 20
   const [form, setForm] = useState(emptyForm)
   const [showCreate, setShowCreate] = useState(false)
   const [editAccount, setEditAccount] = useState<Account | null>(null)
@@ -143,16 +145,17 @@ export function Accounts() {
   const [sessionId, setSessionId] = useState<string>('')
   const [editingSessionId, setEditingSessionId] = useState<string>('')
 
-  const { data, isLoading } = useQuery({ queryKey: ['accounts'], queryFn: api.accounts.list, refetchInterval: 15000 })
+  const { data, isLoading } = useQuery({ queryKey: ['accounts', { page, page_size: pageSize, status: filter === 'ALL' ? undefined : filter }], queryFn: () => api.accounts.list({ page, page_size: pageSize, status: filter === 'ALL' ? undefined : filter }), refetchInterval: 15000 })
   const { data: gridData } = useQuery({ queryKey: ['grids'], queryFn: api.grids.list })
   const { data: sessionData } = useQuery({ queryKey: ['sessions'], queryFn: api.sessions.list })
 
   const accounts = data?.accounts ?? []
+  const total = data?.total ?? 0
+  const totalPages = data?.total_pages ?? 1
   const grids = gridData?.grids ?? []
   const sessions = sessionData?.sessions ?? []
-  const filtered = useMemo(() => filter === 'ALL' ? accounts : accounts.filter(a => a.status === filter), [accounts, filter])
-
-  const invalidate = () => {
+    const invalidate = () => {
+    setPage(1)
     queryClient.invalidateQueries({ queryKey: ['accounts'] })
     queryClient.invalidateQueries({ queryKey: ['sessions'] })
   }
@@ -228,7 +231,7 @@ export function Accounts() {
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div><h1 className="page-title">Accounts</h1><p className="page-subtitle">{accounts.length} account(s) · {sessions.length} session(s) · {filtered.length} showing</p></div>
+        <div><h1 className="page-title">Accounts</h1><p className="page-subtitle">{accounts.length} account(s) · {sessions.length} session(s) · {accounts.length} showing</p></div>
         <div className="flex items-center gap-2">
           <Button variant="outline" loading={importMutation.isPending} onClick={() => importFileRef.current?.click()}>⬆ Import CSV</Button>
           <input ref={importFileRef} type="file" accept=".csv,text/csv" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) importMutation.mutate(f); e.target.value = '' }} />
@@ -258,14 +261,35 @@ export function Accounts() {
       <Card>
         <FilterBar options={filterOptions} value={filter} onChange={setFilter} />
         {isLoading ? <div className="space-y-2 p-5">{[1, 2, 3].map(i => <SkeletonCard key={i} />)}</div>
-        : filtered.length === 0 ? <EmptyState icon="🍪" message={accounts.length === 0 ? 'No accounts yet.' : 'No accounts match this filter.'} />
+        : accounts.length === 0 ? <EmptyState icon="🍪" message={accounts.length === 0 ? 'No accounts yet.' : 'No accounts match this filter.'} />
         : <div className="divide-y divide-gray-100">
-            {filtered.map(acc => (
+            {accounts.map(acc => (
               <AccountItem key={acc.id} account={acc} icon={getIcon(acc.platform)} gridName={gridName(acc)}
                 sessions={sessions} onEdit={() => openEdit(acc)} onDelete={() => handleDelete(acc)}
                 onBind={(sessId) => bindMutation.mutate({ accId: acc.id, sessId })} />
             ))}
           </div>}
+
+      {/* Pagination */}
+      {totalPages > 1 && (
+        <div className="flex items-center justify-between py-3 px-1">
+          <span className="text-sm text-gray-500 dark:text-gray-400">
+            {total} accounts &middot; Page {page} of {totalPages}
+          </span>
+          <div className="flex gap-2">
+            <button
+              onClick={() => setPage(p => Math.max(1, p - 1))}
+              disabled={page <= 1}
+              className="px-3 py-1 text-sm rounded-lg border border-gray-300 dark:border-gray-600 disabled:opacity-40 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+            >Prev</button>
+            <button
+              onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+              disabled={page >= totalPages}
+              className="px-3 py-1 text-sm rounded-lg border border-gray-300 dark:border-gray-600 disabled:opacity-40 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+            >Next</button>
+          </div>
+        </div>
+      )}
       </Card>
 
       {editAccount && (

@@ -19,6 +19,49 @@ export type SessionStatus =
 
 export type GridStatus = 'ONLINE' | 'OFFLINE' | 'ERROR' | 'UNKNOWN'
 
+// ── Pagination ──
+
+export interface PaginatedResponse<T> {
+  page: number
+  page_size: number
+  total: number
+  total_pages: number
+}
+
+export interface AccountListResponse extends PaginatedResponse<Account> {
+  accounts: Account[]
+}
+
+export interface TaskListResponse extends PaginatedResponse<Task> {
+  tasks: Task[]
+}
+
+export interface ScheduleListResponse extends PaginatedResponse<Schedule> {
+  schedules: Schedule[]
+}
+
+export interface PaginationParams {
+  page?: number
+  page_size?: number
+}
+
+export interface AccountListParams extends PaginationParams {
+  status?: string
+  platform?: string
+}
+
+export interface TaskListParams extends PaginationParams {
+  status?: string
+  type?: string
+  account_id?: number
+}
+
+export interface ScheduleListParams extends PaginationParams {
+  enabled?: boolean
+  task_type?: string
+  account_id?: number
+}
+
 export interface GridInstance {
   id: number
   name: string

@@ -18,16 +18,21 @@ export function Schedules() {
   const [showCreate, setShowCreate] = useState(false)
   const [editSchedule, setEditSchedule] = useState<Schedule | null>(null)
   const [form, setForm] = useState(emptyForm)
+  const [page, setPage] = useState(1)
+  const pageSize = 20
 
-  const { data, isLoading } = useQuery({ queryKey: ['schedules'], queryFn: api.schedules.list, refetchInterval: 30000 })
-  const { data: acctData } = useQuery({ queryKey: ['accounts'], queryFn: api.accounts.list })
-  const { data: typeData } = useQuery({ queryKey: ['task-types'], queryFn: api.tasks.types })
+  const { data, isLoading } = useQuery({ queryKey: ['schedules', { page, page_size: pageSize }], queryFn: () => api.schedules.list({ page, page_size: pageSize }), refetchInterval: 30000 })
+  const { data: acctData } = useQuery({ queryKey: ['accounts'], queryFn: () => api.accounts.list() })
+  const { data: typeData } = useQuery({ queryKey: ['task-types'], queryFn: () => api.tasks.types() })
 
   const schedules = data?.schedules ?? []
+  const total = data?.total ?? 0
+  const totalPages = data?.total_pages ?? 1
   const accounts = acctData?.accounts ?? []
   const types = typeData?.types ?? []
 
   const invalidate = () => {
+    setPage(1)
     queryClient.invalidateQueries({ queryKey: ['schedules'] })
     queryClient.invalidateQueries({ queryKey: ['tasks'] })
   }
@@ -140,6 +145,21 @@ export function Schedules() {
           </div>
         )}
       </Card>
+
+      {/* Pagination */}
+      {totalPages > 1 && (
+        <div className="flex items-center justify-between py-3 px-1">
+          <span className="text-sm text-gray-500 dark:text-gray-400">
+            {total} schedules &middot; Page {page} of {totalPages}
+          </span>
+          <div className="flex gap-2">
+            <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page <= 1}
+              className="px-3 py-1 text-sm rounded-lg border border-gray-300 dark:border-gray-600 disabled:opacity-40 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors">Prev</button>
+            <button onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page >= totalPages}
+              className="px-3 py-1 text-sm rounded-lg border border-gray-300 dark:border-gray-600 disabled:opacity-40 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors">Next</button>
+          </div>
+        </div>
+      )}
 
       {modalOpen && (
         <Modal

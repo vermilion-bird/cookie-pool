@@ -70,9 +70,29 @@ def _resolve_grid_url(account: Account) -> str:
 
 
 @router.get("")
-def list_accounts(db: Session = Depends(get_db)):
-    accounts = AccountService.get_all(db)
-    return {"accounts": [a.to_dict(include_grid=True) for a in accounts]}
+def list_accounts(
+    page: int = 1,
+    page_size: int = 20,
+    status: str = None,
+    platform: str = None,
+    db: Session = Depends(get_db),
+):
+    query = db.query(Account)
+    if status:
+        query = query.filter(Account.status == status)
+    if platform:
+        query = query.filter(Account.platform.ilike(f"%{platform}%"))
+    total = query.count()
+    total_pages = max(1, (total + page_size - 1) // page_size)
+    offset = (page - 1) * page_size
+    accounts = query.order_by(Account.id.desc()).offset(offset).limit(page_size).all()
+    return {
+        "accounts": [a.to_dict(include_grid=True) for a in accounts],
+        "page": page,
+        "page_size": page_size,
+        "total": total,
+        "total_pages": total_pages,
+    }
 
 
 @router.post("")

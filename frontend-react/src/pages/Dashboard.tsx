@@ -11,13 +11,13 @@ import type { Account, GridInstance, Task } from '@/types'
 
 export function Dashboard() {
   const { data: acctData, isLoading: acctLoading } = useQuery({
-    queryKey: ['accounts'], queryFn: api.accounts.list, refetchInterval: 15000,
+    queryKey: ['accounts'], queryFn: () => api.accounts.list(), refetchInterval: 15000,
   })
   const { data: gridData, isLoading: gridLoading } = useQuery({
     queryKey: ['grids'], queryFn: api.grids.list, refetchInterval: 30000,
   })
   const { data: taskData, isLoading: taskLoading } = useQuery({
-    queryKey: ['tasks'], queryFn: api.tasks.list, refetchInterval: 10000,
+    queryKey: ['tasks'], queryFn: () => api.tasks.list(), refetchInterval: 10000,
   })
 
   const accounts = acctData?.accounts ?? []

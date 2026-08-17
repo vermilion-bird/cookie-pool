@@ -25,6 +25,8 @@ export function Tasks() {
   const toast = useToast()
   const queryClient = useQueryClient()
   const [filter, setFilter] = useState<FilterValue>('ALL')
+  const [page, setPage] = useState(1)
+  const pageSize = 20
   const [accountId, setAccountId] = useState('')
   const [taskType, setTaskType] = useState('')
   const [params, setParams] = useState('{}')
@@ -33,20 +35,20 @@ export function Tasks() {
   const [detailTask, setDetailTask] = useState<Task | null>(null)
 
   const { data: taskData, isLoading } = useQuery({
-    queryKey: ['tasks'],
-    queryFn: api.tasks.list,
+    queryKey: ['tasks', { page, page_size: pageSize, status: filter === 'ALL' ? undefined : filter }],
+    queryFn: () => api.tasks.list({ page, page_size: pageSize, status: filter === 'ALL' ? undefined : filter }),
     refetchInterval: 10000,
   })
-  const { data: acctData } = useQuery({ queryKey: ['accounts'], queryFn: api.accounts.list })
+  const { data: acctData } = useQuery({ queryKey: ['accounts'], queryFn: () => api.accounts.list() })
   const { data: typeData } = useQuery({ queryKey: ['task-types'], queryFn: api.tasks.types })
 
   const tasks = taskData?.tasks ?? []
+  const total = taskData?.total ?? 0
+  const totalPages = taskData?.total_pages ?? 1
   const types = typeData?.types ?? []
   const activeAccounts = (acctData?.accounts ?? []).filter(a => a.status === 'ACTIVE')
   const pendingIds = useMemo(() => tasks.filter(t => t.status === 'PENDING').map(t => t.id), [tasks])
-  const filtered = useMemo(() => (filter === 'ALL' ? tasks : tasks.filter(t => t.status === filter)), [tasks, filter])
-
-  const invalidate = () => queryClient.invalidateQueries({ queryKey: ['tasks'] })
+  const invalidate = () => { setPage(1); queryClient.invalidateQueries({ queryKey: ['tasks'] }) }
 
   const createMutation = useMutation({
     mutationFn: () => api.tasks.create({
@@ -167,11 +169,11 @@ export function Tasks() {
           <div className="space-y-2 p-5">
             {[1, 2, 3].map(i => <SkeletonCard key={i} />)}
           </div>
-        ) : filtered.length === 0 ? (
+        ) : tasks.length === 0 ? (
           <EmptyState icon="📭" message={tasks.length === 0 ? 'No tasks yet. Create one above.' : 'No tasks match this filter.'} />
         ) : (
           <div className="divide-y divide-gray-100">
-            {filtered.map(t => (
+            {tasks.map(t => (
               <TaskItem
                 key={t.id}
                 task={t}
@@ -184,6 +186,21 @@ export function Tasks() {
           </div>
         )}
       </Card>
+
+      {/* Pagination */}
+      {totalPages > 1 && (
+        <div className="flex items-center justify-between py-3 px-1">
+          <span className="text-sm text-gray-500 dark:text-gray-400">
+            {total} tasks &middot; Page {page} of {totalPages}
+          </span>
+          <div className="flex gap-2">
+            <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page <= 1}
+              className="px-3 py-1 text-sm rounded-lg border border-gray-300 dark:border-gray-600 disabled:opacity-40 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors">Prev</button>
+            <button onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page >= totalPages}
+              className="px-3 py-1 text-sm rounded-lg border border-gray-300 dark:border-gray-600 disabled:opacity-40 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors">Next</button>
+          </div>
+        </div>
+      )}
 
       {/* Detail Modal */}
       {detailTask && (
