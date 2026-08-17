@@ -188,6 +188,27 @@ def start_login(session_id: int, db: DBSession = Depends(get_db)):
     s.status = "CREATING"
     db.commit()
 
+    # ── 容量检查：Grid 是否还有空闲 session 槽位 ──
+    cap = grid_service.check_capacity(node, _live_drivers)
+    if not cap["available"]:
+        s.status = "FAILED"
+        s.closed_at = datetime.now(timezone.utc)
+        db.commit()
+        # 查找可用的替代 Grid
+        alt_nodes = db.query(GridInstance).filter(
+            GridInstance.id != s.node_id,
+        ).all()
+        alt_info = ""
+        for alt in alt_nodes:
+            alt_cap = grid_service.check_capacity(alt, _live_drivers)
+            if alt_cap["available"]:
+                alt_info += f"  {alt.name} ({alt.hub_url}): {alt_cap['message']}\n"
+        suggestion = f"\nAvailable alternatives:\n{alt_info}" if alt_info else " No other nodes available."
+        raise HTTPException(
+            status_code=503,
+            detail=f"Grid node '{node.name}' is at capacity ({cap['message']}).{suggestion}",
+        )
+
     try:
         os.makedirs(s.profile_path, exist_ok=True)
         os.chmod(s.profile_path, 0o777)

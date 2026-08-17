@@ -271,3 +271,71 @@ class GridService:
                 continue
         return {"status": "OFFLINE", "nodes": 0, "ready": False,
                 "message": "No status endpoint reachable"}
+
+    @staticmethod
+    def get_active_session_count(grid_url: str) -> int:
+        """Query Grid status API for current active session count. Returns -1 on failure."""
+        import urllib.request
+        import json
+        try:
+            for endpoint in ("/wd/hub/status", "/status"):
+                try:
+                    resp = urllib.request.urlopen(f"{grid_url}{endpoint}", timeout=5)
+                    if resp.status != 200:
+                        continue
+                    data = json.loads(resp.read().decode())
+                    value = data.get("value", {})
+                    nodes = value.get("value", {}).get("nodes", [])
+                    if isinstance(nodes, list):
+                        total = 0
+                        for n in nodes:
+                            slots = n.get("slots", [])
+                            for slot in slots:
+                                if slot.get("session"):
+                                    total += 1
+                        return total
+                    # Standalone mode: check if there's a session
+                    ready = value.get("ready", False)
+                    nodes_list = value.get("nodes", [])
+                    if nodes_list:
+                        return len([n for n in nodes_list if n.get("session")])
+                    return 0 if ready else -1
+                except Exception:
+                    continue
+        except Exception as e:
+            logger.warning(f"Failed to query session count for {grid_url}: {e}")
+        return -1
+
+    @staticmethod
+    def check_capacity(node, live_drivers: dict) -> dict:
+        """Check if a Grid node has available capacity.
+        
+        Returns:
+            {"available": bool, "active_sessions": int, "max_sessions": int, "message": str}
+        """
+        if node is None:
+            return {"available": False, "active_sessions": 0, "max_sessions": 0,
+                    "message": "Node not found"}
+        
+        max_sessions = node.max_sessions or 1
+        
+        # Count local live drivers targeting this node's URL
+        local_count = 0
+        for driver in live_drivers.values():
+            try:
+                if driver and driver.command_executor._url and node.hub_url in driver.command_executor._url:
+                    local_count += 1
+            except Exception:
+                pass
+        
+        # Query Grid for actual session count
+        grid_count = GridService.get_active_session_count(node.hub_url)
+        effective_count = max(local_count, grid_count) if grid_count >= 0 else local_count
+        
+        available = effective_count < max_sessions
+        return {
+            "available": available,
+            "active_sessions": effective_count,
+            "max_sessions": max_sessions,
+            "message": f"{effective_count}/{max_sessions} sessions" if available else f"Full ({max_sessions}/{max_sessions})",
+        }

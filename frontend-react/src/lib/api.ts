@@ -103,6 +103,7 @@ export const api = {
       }),
     remove: (id: number) => request<{ status: string }>(`/api/grids/${id}`, { method: 'DELETE' }),
     check: (id: number) => request<GridCheckResult>(`/api/grids/${id}/check`, { method: 'POST' }),
+    capacity: (id: number) => request<{ grid_id: number; name: string; available: boolean; active_sessions: number; max_sessions: number; message: string }>(`/api/grids/${id}/capacity`, { method: 'POST' }),
   },
 
   tasks: {

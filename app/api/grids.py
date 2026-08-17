@@ -130,3 +130,14 @@ def check_grid(grid_id: int, db: Session = Depends(get_db)):
         "nodes": result["nodes"],
         "ready": result["ready"],
     }
+
+
+@router.post("/{grid_id}/capacity")
+def check_grid_capacity(grid_id: int, db: Session = Depends(get_db)):
+    """检查 Grid 容量：当前会话数 / 最大会话数。"""
+    grid = db.query(GridInstance).filter(GridInstance.id == grid_id).first()
+    if not grid:
+        raise HTTPException(status_code=404, detail="Grid not found")
+    from api.sessions_v2 import _live_drivers
+    cap = grid_service.check_capacity(grid, _live_drivers)
+    return {"grid_id": grid_id, "name": grid.name, **cap}
