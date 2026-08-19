@@ -1,3 +1,4 @@
+from __future__ import annotations
 """Session v2 API — 常驻浏览器 + 多平台 Account 绑定 + Cookie 提取。"""
 import logging
 import os
@@ -9,7 +10,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session as DBSession
 
 from database import get_db
-from models import Session, SessionAccount, Account, GridInstance, BrowserSession
+from models import Session, SessionAccount, Account, GridInstance
 from services.account_service import AccountService
 from services.grid_service import GridService
 from config import HOST_ADDRESS, NOVNC_PORT, PROFILES_DIR
@@ -18,8 +19,19 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/sessions", tags=["sessions-v2"])
 
 _live_drivers: dict[int, object] = {}
+_session_locks: dict[int, object] = {}  # threading.Lock per session — prevent concurrent driver creation
+_import_lock = __import__("threading").Lock()
 
 grid_service = GridService()
+
+
+def _get_session_lock(session_id: int):
+    """获取 session 级别的互斥锁（按需创建，线程安全）。"""
+    if session_id not in _session_locks:
+        with _import_lock:
+            if session_id not in _session_locks:
+                _session_locks[session_id] = __import__("threading").Lock()
+    return _session_locks[session_id]
 
 
 # ── Pydantic models ──
@@ -36,15 +48,38 @@ class BindAccount(BaseModel):
 # ── Helpers ──
 
 def _resolve_novnc_url(node: GridInstance) -> str:
-    if node and node.novnc_base_url:
-        return node.novnc_base_url
-    return f"http://{HOST_ADDRESS}:{NOVNC_PORT}/vnc.html"
+    """解析 noVNC URL。
+    
+    优先使用全局 HOST_ADDRESS + NOVNC_PORT 配置（保证一致性），
+    仅当 Grid 是远程外部节点时才使用其自定义 novnc_base_url。
+    """
+    # 远程外部 Grid（非内部 Default）使用自定义 URL
+    if node and node.novnc_base_url and node.name != "Default Internal Grid":
+        url = node.novnc_base_url.strip()
+        if url and url.startswith("http"):
+            return url
+    # 内部 Grid 和兜底：使用全局配置
+    host = HOST_ADDRESS or "127.0.0.1"
+    port = NOVNC_PORT or "7901"
+    return f"http://{host}:{port}/vnc.html"
 
 
 def _close_driver(session_id: int) -> None:
+    """安全关闭 session driver，清理 _live_drivers 和 Grid 侧 session。
+    
+    确保：
+    1. 从 _live_drivers 移除
+    2. Selenium driver.quit()（释放本地连接）
+    3. Grid REST DELETE（释放节点槽位）一 driver.quit 失败时作为兜底
+    """
     driver = _live_drivers.pop(session_id, None)
     if driver is not None:
-        GridService.close_driver(driver)
+        try:
+            GridService.close_driver(driver)
+        except Exception as e:
+            logger.warning(f"Error closing driver for session {session_id}: {e}")
+    # 同时清理 session 锁
+    _session_locks.pop(session_id, None)
 
 
 # ── CRUD ──
@@ -133,6 +168,12 @@ def bind_account(session_id: int, data: BindAccount, db: DBSession = Depends(get
     db.add(sa)
     db.commit()
     db.refresh(sa)
+
+    # 如果 Session 已经是 ACTIVE，绑定 Account 自动标记为已登录
+    if s.status == "ACTIVE" and account.status == "WAIT_LOGIN":
+        AccountService.mark_logged_in(db, account)
+        logger.info(f"Account {account.id} ({account.name}) auto-promoted to ACTIVE (session {session_id} is ACTIVE)")
+
     logger.info(f"Bound account {account.id} ({account.platform}) to session {session_id}")
     return {"session_account": sa.to_dict()}
 
@@ -160,30 +201,36 @@ def start_login(session_id: int, db: DBSession = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Session not found")
 
     node = db.query(GridInstance).filter(GridInstance.id == s.node_id).first()
+    if not node:
+        raise HTTPException(status_code=500, detail=f"Grid node {s.node_id} not found")
 
     # ── 检查已有 driver 是否存活 ──
     existing = _live_drivers.get(session_id)
     if existing is not None and _ping_driver(existing):
-        # Driver 存活 → 直接复用
+        # Driver 存活 → 直接复用（同时刷新 noVNC URL 防止端口变化）
         if s.status not in ("LOGIN", "ACTIVE"):
             s.status = "LOGIN"
-            db.commit()
+        fresh_novnc = _resolve_novnc_url(node)
+        if s.novnc_url != fresh_novnc:
+            s.novnc_url = fresh_novnc
+            logger.info(f"Session {session_id}: updated novnc_url → {fresh_novnc}")
+        db.commit()
         return {
             "session": s.to_dict(),
-            "novnc_url": s.novnc_url or _resolve_novnc_url(node),
+            "novnc_url": fresh_novnc,
             "message": "Browser already running",
         }
 
     # ── Driver 已死或不存在 → 关闭残留 + 重建（复用 profile 保留登录态）─
     _close_driver(session_id)
 
-    # 清理旧 BrowserSession 残留
-    old = db.query(BrowserSession).filter(
-        BrowserSession.status.in_(["CREATING", "READY", "LOGIN"]),
-    ).all()
-    for o in old:
-        o.status = "CLOSED"; o.closed_at = datetime.now(timezone.utc)
-    db.commit()
+    # 强制清理 Grid 侧孤儿 session（driver 不在内存时 _close_driver 无法清理）
+    if s.grid_session_id:
+        try:
+            grid_service.delete_session(node.hub_url, s.grid_session_id)
+            logger.info(f"Cleared orphan Grid session {s.grid_session_id} before login")
+        except Exception:
+            logger.debug(f"No orphan to clear or delete failed: {s.grid_session_id}")
 
     s.status = "CREATING"
     db.commit()
@@ -209,7 +256,27 @@ def start_login(session_id: int, db: DBSession = Depends(get_db)):
             detail=f"Grid node '{node.name}' is at capacity ({cap['message']}).{suggestion}",
         )
 
+    # ── Session 锁：防止并发创建 driver 导致 Profile 损坏 ──
+    lock = _get_session_lock(session_id)
+    acquired = lock.acquire(timeout=30)  # 最多等 30s，超时说明另一个操作卡住了
+    if not acquired:
+        raise HTTPException(
+            status_code=409,
+            detail="Another operation is in progress for this session. Please wait and retry.",
+        )
     try:
+        # 双重检查：获取锁后再次确认没有并发创建了 driver
+        existing = _live_drivers.get(session_id)
+        if existing is not None and _ping_driver(existing):
+            if s.status not in ("LOGIN", "ACTIVE"):
+                s.status = "LOGIN"
+                db.commit()
+            return {
+                "session": s.to_dict(),
+                "novnc_url": s.novnc_url or _resolve_novnc_url(node),
+                "message": "Browser already running (race condition resolved)",
+            }
+
         os.makedirs(s.profile_path, exist_ok=True)
         os.chmod(s.profile_path, 0o777)
 
@@ -228,6 +295,8 @@ def start_login(session_id: int, db: DBSession = Depends(get_db)):
         s.closed_at = datetime.now(timezone.utc)
         db.commit()
         raise HTTPException(status_code=500, detail=f"Failed to start browser: {e}")
+    finally:
+        lock.release()
 
     return {
         "session": s.to_dict(),
@@ -248,11 +317,12 @@ def complete_login(session_id: int, db: DBSession = Depends(get_db)):
     s.status = "ACTIVE"
     db.commit()
 
-    # 标记所有绑定的 Account 为 ACTIVE
+    # 标记所有绑定的 Account 为 ACTIVE（含之前被 sweeper 标记的 LOGIN_EXPIRED）
     for sa in s.accounts:
         acc = sa.account
-        if acc and acc.status == "WAIT_LOGIN":
+        if acc and acc.status in ("WAIT_LOGIN", "LOGIN_EXPIRED", "IN_USE"):
             AccountService.mark_logged_in(db, acc)
+            logger.info(f"Account {acc.id} ({acc.name}) → ACTIVE (session {session_id} completed)")
 
     return {"status": "ok", "message": "Session is now ACTIVE"}
 
@@ -279,59 +349,78 @@ def _ping_driver(driver) -> bool:
         return False
 
 
-def _reconnect_via_grid(s: Session) -> object | None:
-    """通过已存储的 grid_session_id 尝试重新连接到已有的 Grid session。
-    仅当 Python driver 丢失但 Grid 端 session 仍存活时有用。"""
+def _get_grid_status(hub_url: str, timeout: int = 5) -> dict | None:
+    """获取 Grid /status 响应。"""
+    try:
+        import urllib.request, json as _json
+        resp = urllib.request.urlopen(f"{hub_url}/status", timeout=timeout)
+        return _json.loads(resp.read())
+    except Exception:
+        return None
+
+
+def _find_active_grid_session_id(hub_url: str) -> str | None:
+    """从 Grid /status 端点查找当前活跃的 session ID。"""
+    data = _get_grid_status(hub_url)
+    if not data:
+        return None
+    for node in data.get("value", {}).get("nodes", []):
+        for slot in node.get("slots", []):
+            sess = slot.get("session")
+            if sess and sess.get("sessionId"):
+                return sess["sessionId"]
+    return None
+
+
+def _reconnect_via_grid(s: Session):  # -> Optional[Any]
+    """通过已存储的 grid_session_id 尝试重新连接到已有的 Grid session。"""
     if not s.grid_session_id:
         return None
     node = s.node
     if not node:
         return None
+    return _attach_driver_to_session(node.hub_url, s.grid_session_id)
+
+
+def _attach_driver_to_session(hub_url: str, grid_session_id: str):  # -> Optional[Any]
+    """挂载 WebDriver 到已有 Grid session，不创建新 session、不消耗 Grid 槽位。
+    
+    策略：
+    1. 先尝试创建 Remote driver（需要空闲 slot）→ 成功则 swap session ID
+    2. 若无空闲 slot → 直接构造 driver 对象，手动设置 session_id"""
     try:
         from selenium import webdriver
         from selenium.webdriver.remote.remote_connection import RemoteConnection
         chrome_options = webdriver.ChromeOptions()
-        executor = RemoteConnection(node.hub_url)
-        executor.set_timeout(10)  # 10s 连接超时，防止阻塞启动
+        executor = RemoteConnection(hub_url)
+        executor.set_timeout(10)
         driver = webdriver.Remote(
             command_executor=executor,
             options=chrome_options,
         )
-        # webdriver.Remote() 自动创建了一个新 session → 保存其 ID 用于清理
-        temp_session_id = driver.session_id
-        # 切换到已有的 grid_session_id
-        driver.session_id = s.grid_session_id
-        # 清理临时创建的 session 释放 Grid 槽位
+        temp_sid = driver.session_id
+        driver.session_id = grid_session_id
         try:
-            grid_service.delete_session(node.hub_url, temp_session_id)
+            grid_service.delete_session(hub_url, temp_sid)
         except Exception:
-            logger.debug(f"Failed to clean up temp session {temp_session_id}")
-        # 验证连接
+            logger.debug(f"Failed to clean up temp session {temp_sid}")
         driver.execute_script("return 1")
-        logger.info(f"Reconnected to existing Grid session {s.grid_session_id}")
+        logger.info(f"Attached driver to Grid session {grid_session_id}")
         return driver
     except Exception as e:
-        logger.info(f"Cannot reconnect to Grid session {s.grid_session_id}: {e}")
+        logger.debug(f"Cannot attach driver to session {grid_session_id}: {e}")
         return None
 
 
 @router.get("/{session_id}/health")
 def session_health(session_id: int, db: DBSession = Depends(get_db)):
-    """检查 session 浏览器是否存活。"""
+    """检查 session 浏览器是否存活（仅检查内存 driver）。"""
     s = db.query(Session).filter(Session.id == session_id).first()
     if not s:
         raise HTTPException(status_code=404, detail="Session not found")
 
     driver = _live_drivers.get(session_id)
     alive = driver is not None and _ping_driver(driver)
-
-    # 如果 driver 丢失但 grid_session_id 还在，尝试重连
-    if not alive and s.grid_session_id:
-        reconnected = _reconnect_via_grid(s)
-        if reconnected:
-            _live_drivers[session_id] = reconnected
-            alive = True
-            driver = reconnected
 
     return {
         "session_id": session_id,
@@ -353,11 +442,30 @@ def restart_session(session_id: int, db: DBSession = Depends(get_db)):
         raise HTTPException(status_code=400,
                             detail=f"Session is {s.status}; only LOGIN/ACTIVE/FAILED/CLOSED can be restarted")
 
-    # 关闭旧 driver
-    _close_driver(session_id)
-
-    node = db.query(GridInstance).filter(GridInstance.id == s.node_id).first()
+    # ── Session 锁：防止并发操作导致 Profile 损坏 ──
+    lock = _get_session_lock(session_id)
+    acquired = lock.acquire(timeout=30)
+    if not acquired:
+        raise HTTPException(
+            status_code=409,
+            detail="Another operation is in progress for this session. Please wait and retry.",
+        )
     try:
+        # 关闭旧 driver
+        _close_driver(session_id)
+
+        node = db.query(GridInstance).filter(GridInstance.id == s.node_id).first()
+        if not node:
+            raise HTTPException(status_code=500, detail=f"Grid node {s.node_id} not found")
+
+        # 强制清理 Grid 侧孤儿 session（driver 不在内存时 _close_driver 无法清理）
+        if s.grid_session_id:
+            try:
+                grid_service.delete_session(node.hub_url, s.grid_session_id)
+                logger.info(f"Cleared orphan Grid session {s.grid_session_id} before restart")
+            except Exception:
+                logger.debug(f"No orphan to clear or delete failed: {s.grid_session_id}")
+
         os.makedirs(s.profile_path, exist_ok=True)
         os.chmod(s.profile_path, 0o777)
 
@@ -384,6 +492,8 @@ def restart_session(session_id: int, db: DBSession = Depends(get_db)):
         s.closed_at = datetime.now(timezone.utc)
         db.commit()
         raise HTTPException(status_code=500, detail=f"Failed to restart browser: {e}")
+    finally:
+        lock.release()
 
     return {
         "session": s.to_dict(),
@@ -395,45 +505,95 @@ def restart_session(session_id: int, db: DBSession = Depends(get_db)):
 # ── Cookie 提取 ──
 
 def _extract_session_cookies(s: Session, platform_filter: str = None) -> dict:
-    """从存活的 session driver 提取 cookie，按 platform 过滤。"""
-    driver = _live_drivers.get(s.id)
+    """从存活的 session driver 提取 cookie，按 platform 过滤。
 
-    # 检查 liveness；driver 对象存在但已死时尝试 Grid 重连
-    if driver is not None and not _ping_driver(driver):
-        logger.warning(f"Session {s.id} driver is dead, attempting Grid reconnect")
-        reconnected = _reconnect_via_grid(s)
-        if reconnected:
-            _live_drivers[s.id] = reconnected
-            driver = reconnected
-        else:
-            driver = None
+    稳定性增强：
+    - 最多 3 次重试（指数退避：1s / 2s / 4s）
+    - CDP 优先（全量 cookie），失败回退到 Selenium get_cookies()
+    - driver 死时自动尝试 Grid 重连
+    - 所有尝试均失败后返回明确错误
+    """
+    import time
 
-    if driver is None:
-        raise HTTPException(
-            status_code=400,
-            detail="Session browser is not running. Call POST /{id}/restart to revive it.",
-        )
+    max_attempts = 3
+    last_error = None
 
-    try:
-        # CDP 全量获取
-        result = driver.execute_cdp_cmd("Network.getAllCookies", {})
-        cookies = result.get("cookies", [])
-    except Exception:
-        cookies = driver.get_cookies()
+    for attempt in range(max_attempts):
+        driver = _live_drivers.get(s.id)
 
-    if platform_filter:
-        cookies = [c for c in cookies
-                   if platform_filter.lower() in (c.get("domain") or "").lower()]
+        # 检查 liveness；driver 对象存在但已死时尝试 Grid 重连
+        if driver is not None and not _ping_driver(driver):
+            logger.warning(
+                f"Session {s.id} driver is dead (attempt {attempt+1}/{max_attempts}), "
+                f"attempting Grid reconnect"
+            )
+            reconnected = _reconnect_via_grid(s)
+            if reconnected:
+                _live_drivers[s.id] = reconnected
+                driver = reconnected
+            else:
+                driver = None
 
-    cookie_str = "; ".join(f"{c['name']}={c['value']}" for c in cookies)
-    return {
-        "count": len(cookies),
-        "cookie_string": cookie_str,
-        "cookies": [
-            {"name": c["name"], "value": c["value"], "domain": c.get("domain")}
-            for c in cookies
-        ],
-    }
+        if driver is None:
+            last_error = "Session browser is not running. Call POST /sessions/{id}/restart to revive it."
+            if attempt < max_attempts - 1:
+                delay = 2 ** attempt  # 1s, 2s, 4s
+                logger.info(f"Session {s.id} no driver, retrying in {delay}s (attempt {attempt+1}/{max_attempts})")
+                time.sleep(delay)
+                continue
+            break
+
+        try:
+            # CDP 全量获取（Network.getAllCookies 返回所有域名的 cookie）
+            result = driver.execute_cdp_cmd("Network.getAllCookies", {})
+            cookies = result.get("cookies", [])
+            logger.debug(f"Session {s.id}: CDP returned {len(cookies)} cookies")
+        except Exception as cdp_err:
+            logger.warning(
+                f"Session {s.id} CDP cookie fetch failed (attempt {attempt+1}/{max_attempts}): "
+                f"{cdp_err}, falling back to Selenium"
+            )
+            try:
+                cookies = driver.get_cookies()
+                logger.debug(f"Session {s.id}: Selenium fallback returned {len(cookies)} cookies")
+            except Exception as sel_err:
+                last_error = f"Cookie extraction failed: {sel_err}"
+                if attempt < max_attempts - 1:
+                    delay = 2 ** attempt
+                    logger.warning(
+                        f"Session {s.id} cookie extraction failed (attempt {attempt+1}/{max_attempts}), "
+                        f"retrying in {delay}s"
+                    )
+                    time.sleep(delay)
+                    continue
+                break
+
+        # Success — filter and return
+        if platform_filter:
+            cookies = [c for c in cookies
+                       if platform_filter.lower() in (c.get("domain") or "").lower()]
+            if not cookies:
+                logger.warning(
+                    f"Session {s.id}: no cookies matched platform filter '{platform_filter}' "
+                    f"(total cookies before filter: {len(cookies)})"
+                )
+
+        cookie_str = "; ".join(f"{c['name']}={c['value']}" for c in cookies)
+        return {
+            "count": len(cookies),
+            "cookie_string": cookie_str,
+            "cookies": [
+                {"name": c["name"], "value": c["value"], "domain": c.get("domain")}
+                for c in cookies
+            ],
+        }
+
+    # All attempts exhausted
+    raise HTTPException(
+        status_code=503,
+        detail=last_error or "Cookie extraction failed after {max_attempts} attempts. "
+                          "The session browser may need to be restarted.",
+    )
 
 
 @router.get("/{session_id}/cookies/plain")

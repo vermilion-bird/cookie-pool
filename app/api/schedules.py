@@ -3,6 +3,8 @@ import logging
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
+from typing import Optional
+
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -22,17 +24,17 @@ class ScheduleCreate(BaseModel):
     cron: str
     task_type: str
     params: str = "{}"
-    account_id: int | None = None
+    account_id: Optional[int] = None
     enabled: bool = True
 
 
 class ScheduleUpdate(BaseModel):
-    name: str = None
-    cron: str = None
-    task_type: str = None
-    params: str = None
-    account_id: int | None = None
-    enabled: bool = None
+    name: Optional[str] = None
+    cron: Optional[str] = None
+    task_type: Optional[str] = None
+    params: Optional[str] = None
+    account_id: Optional[int] = None
+    enabled: Optional[bool] = None
 
 
 def _validate(data) -> None:
@@ -53,7 +55,7 @@ def _validate(data) -> None:
             raise HTTPException(status_code=400, detail="params must be valid JSON")
 
 
-def _check_account(db: Session, account_id: int | None) -> None:
+def _check_account(db: Session, account_id: Optional[int]) -> None:
     if account_id is not None and not db.query(Account).filter(Account.id == account_id).first():
         raise HTTPException(status_code=400, detail=f"Account {account_id} not found")
 

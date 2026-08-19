@@ -28,8 +28,31 @@ API_KEY = os.getenv("API_KEY", "dev-key")
 BROWSER_TIMEOUT = int(os.getenv("BROWSER_TIMEOUT", "30"))
 SESSION_TIMEOUT_MINUTES = int(os.getenv("SESSION_TIMEOUT_MINUTES", "15"))
 
+# Session V2 超时回收（分钟）：
+# CREATING / READY 超过此时间未进入 LOGIN → FAILED
+SESSION_V2_CREATING_TIMEOUT_MINUTES = int(os.getenv("SESSION_V2_CREATING_TIMEOUT_MINUTES", "5"))
+# LOGIN 超过此时间未 complete → FAILED（默认 120 分钟，给 VNC 手动登录留足时间）
+SESSION_V2_LOGIN_TIMEOUT_MINUTES = int(os.getenv("SESSION_V2_LOGIN_TIMEOUT_MINUTES", "120"))
+
 # 日志
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 
 # noVNC 公网访问 URL 模板
 NOVNC_PUBLIC_URL = f"http://{HOST_ADDRESS}:{NOVNC_PORT}/vnc.html"
+
+# VNC 密码（设值后 noVNC 需要密码认证）
+VNC_PASSWORD = os.getenv("VNC_PASSWORD", "")
+
+# ── 稳定性配置 ──
+
+# 节点心跳间隔（秒）：周期探测所有 Grid 节点健康状态
+NODE_HEARTBEAT_INTERVAL = int(os.getenv("NODE_HEARTBEAT_INTERVAL", "30"))
+
+# Session 最大生命周期（小时）：超过此时间的 session 被强制关闭，防止泄漏
+SESSION_MAX_LIFETIME_HOURS = int(os.getenv("SESSION_MAX_LIFETIME_HOURS", "24"))
+
+# Cookie 提取最大重试次数
+COOKIE_EXTRACT_MAX_RETRIES = int(os.getenv("COOKIE_EXTRACT_MAX_RETRIES", "3"))
+
+# 僵尸 session 清理间隔（秒）：扫描 Grid 上未被 DB 记录的孤立 session
+ZOMBIE_CLEANUP_INTERVAL = int(os.getenv("ZOMBIE_CLEANUP_INTERVAL", "60"))

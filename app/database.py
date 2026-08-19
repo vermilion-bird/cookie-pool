@@ -45,7 +45,7 @@ class Base(DeclarativeBase):
 
 def init_db():
     """Initialize database: create tables if not exist, run migrations."""
-    from models import GridInstance, Account, BrowserSession, Session, SessionAccount, Task, AuditLog  # noqa: F401
+    from models import GridInstance, Account, Session, SessionAccount, Task, AuditLog  # noqa: F401
     Base.metadata.create_all(bind=engine)
 
     inspector = inspect(engine)
@@ -93,7 +93,7 @@ def init_db():
                 name=DEFAULT_GRID_NAME,
                 hub_url=GRID_URL,
                 novnc_base_url=NOVNC_PUBLIC_URL,
-                status="UNKNOWN",
+                status="ONLINE",
                 max_sessions=1,
                 notes="Auto-created default grid. Accounts without an explicit grid_id use this one.",
             )

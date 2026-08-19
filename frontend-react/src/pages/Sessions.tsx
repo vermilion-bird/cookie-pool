@@ -144,24 +144,24 @@ export function Sessions() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-center justify-between gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-2 sm:gap-3">
         <div>
-          <h1 className="page-title">Sessions</h1>
-          <p className="page-subtitle">{sessions.length} session(s) · {sessions.filter(s => s.status === 'ACTIVE').length} active</p>
+          <h1 className="page-title text-xl sm:text-2xl">Sessions</h1>
+          <p className="page-subtitle text-xs sm:text-sm">{sessions.length} session(s) · {sessions.filter(s => s.status === 'ACTIVE').length} active</p>
         </div>
-        <Button variant="success" onClick={() => setShowCreate(!showCreate)}>{showCreate ? 'Cancel' : '+ New Session'}</Button>
+        <Button variant="success" onClick={() => setShowCreate(!showCreate)}>{showCreate ? 'Cancel' : <><span className="hidden sm:inline">+ New Session</span><span className="sm:hidden">+ New</span></>}</Button>
       </div>
 
       {showCreate && (
         <Card>
           <CardHeader title="New Session" subtitle="Create a persistent browser session to host multiple platform accounts" />
           <CardSection>
-            <div className="flex flex-wrap items-end gap-3">
-              <div className="min-w-[160px] flex-1"><label className="mb-1 block text-xs font-semibold text-ink-soft/50 uppercase tracking-wider">Name</label>
+            <div className="grid grid-cols-1 sm:flex sm:flex-wrap items-end gap-3">
+              <div className="sm:min-w-[160px] sm:flex-1"><label className="mb-1 block text-xs font-semibold text-ink-soft/50 uppercase tracking-wider">Name</label>
                 <input className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm" placeholder="ad-pool-01" value={name} onChange={e => setName(e.target.value)} onKeyDown={e => e.key === 'Enter' && !createMutation.isPending && createMutation.mutate()} /></div>
-              <div className="min-w-[140px] flex-1"><label className="mb-1 block text-xs font-semibold text-ink-soft/50 uppercase tracking-wider">Node</label>
+              <div className="sm:min-w-[140px] sm:flex-1"><label className="mb-1 block text-xs font-semibold text-ink-soft/50 uppercase tracking-wider">Node</label>
                 <select className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm" value={nodeId} onChange={e => setNodeId(e.target.value)}>{grids.filter(g => g.status === 'ONLINE').map(g => <option key={g.id} value={g.id}>{g.name}</option>)}</select></div>
-              <Button variant="success" loading={createMutation.isPending} onClick={() => { if (!name.trim()) { toast('Name required', 'error'); return } createMutation.mutate() }}>Create</Button>
+              <Button variant="success" loading={createMutation.isPending} onClick={() => { if (!name.trim()) { toast('Name required', 'error'); return } createMutation.mutate() }} className="w-full sm:w-auto">Create</Button>
             </div>
           </CardSection>
         </Card>
@@ -172,16 +172,15 @@ export function Sessions() {
         : sessions.length === 0 ? <EmptyState icon="🖥️" message="No sessions yet. Create one to get started." />
         : <div className="divide-y divide-gray-100">
             {sessions.map(s => (
-              <div key={s.id} className="flex flex-wrap items-center gap-4 px-5 py-4 transition-colors hover:bg-gray-50/70 sm:gap-6">
-                <div className="min-w-0 flex-[2]">
+              <div key={s.id} className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4 px-4 sm:px-5 py-3 sm:py-4 transition-colors hover:bg-gray-50/70">
+                <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
                     <span className="text-sm font-semibold text-ink truncate cursor-pointer hover:text-brand" onClick={() => setDetailId(s.id)}>{s.name}</span>
                     <Badge status={s.status as any} />{healthDot(s)}
                   </div>
-                  <p className="mt-0.5 text-xs text-ink-soft/40">{s.accounts?.length || 0} account(s) · {grids.find(g => g.id === s.node_id)?.name ?? `Node #${s.node_id}`}</p>
+                  <p className="mt-0.5 text-xs text-ink-soft/40">{s.accounts?.length || 0} accounts · {grids.find(g => g.id === s.node_id)?.name ?? `Node #${s.node_id}`} · {s.created_at ? timeAgo(s.created_at) : ''}</p>
                 </div>
-                <div className="hidden text-xs text-ink-soft/40 sm:block">{s.created_at ? timeAgo(s.created_at) : ''}</div>
-                <div className="flex items-center gap-1.5">
+                <div className="flex items-center gap-1 sm:gap-1.5 flex-wrap">
                   {actionButton(s)}
                   {s.status === 'ACTIVE' && (
                     <Button variant="ghost" size="sm" onClick={async () => {
@@ -190,11 +189,11 @@ export function Sessions() {
                         if (text) { await navigator.clipboard.writeText(text); toast('Cookies copied!', 'success') }
                         else toast('No cookies found', 'error')
                       } catch (e: any) { toast('Failed: ' + e.message, 'error') }
-                    }} title="Copy all cookies (Netscape format)">🍪 Copy</Button>
+                    }} title="Copy all cookies">🍪</Button>
                   )}
                   <Button variant="ghost" size="sm" onClick={() => setDetailId(s.id)}>Detail</Button>
                   <button onClick={() => { if (confirm(`Delete "${s.name}"?`)) deleteMutation.mutate(s.id) }}
-                    className="flex h-8 w-8 items-center justify-center rounded-lg text-ink-soft/30 transition-colors hover:bg-red-50 hover:text-red-500"><svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg></button>
+                    className="flex h-7 w-7 sm:h-8 sm:w-8 items-center justify-center rounded-lg text-ink-soft/30 transition-colors hover:bg-red-50 hover:text-red-500"><svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg></button>
                 </div>
               </div>
             ))}
@@ -211,6 +210,13 @@ export function Sessions() {
             <div className="flex items-center gap-3">
               <span className="text-sm font-medium">Status:</span><Badge status={detailSession.status as any} />
               <span className="text-xs text-ink-soft/40">Node: {grids.find(g => g.id === detailSession.node_id)?.name ?? '?'}</span>
+              {detailSession.vnc_password && (
+                <span className="flex items-center gap-1 text-xs text-ink-soft/50" title="VNC password">
+                  🔑 <code className="rounded bg-gray-100 px-1.5 py-0.5 text-[0.7rem] font-mono select-all">{detailSession.vnc_password}</code>
+                  <button onClick={() => { navigator.clipboard.writeText(detailSession.vnc_password!); toast('VNC password copied!', 'success') }}
+                    className="text-ink-soft/30 hover:text-ink-soft/60 transition-colors" title="Copy password">📋</button>
+                </span>
+              )}
               {detailSession.novnc_url && <a href={detailSession.novnc_url} target="_blank" rel="noopener noreferrer" className="ml-auto text-xs text-brand underline">noVNC ↗</a>}
             </div>
 
@@ -231,7 +237,7 @@ export function Sessions() {
               <div>
                 <div className="mb-2 flex items-center justify-between"><span className="text-sm font-medium">noVNC Browser</span>
                   <a href={detailSession.novnc_url} target="_blank" rel="noopener noreferrer" className="text-xs text-brand underline">Open in new tab ↗</a></div>
-                <div className="overflow-hidden rounded-xl border border-gray-200 bg-gray-900"><iframe src={detailSession.novnc_url} className="block w-full" style={{ height: '480px' }} title="noVNC" /></div>
+                <div className="overflow-hidden rounded-xl border border-gray-200 bg-gray-900"><iframe src={detailSession.novnc_url} className="block w-full aspect-[4/3] sm:aspect-auto sm:h-[480px]" title="noVNC" /></div>
                 {detailSession.status === 'LOGIN' && <p className="mt-2 text-xs text-ink-soft/50">Log in to all platforms, then click "Complete".</p>}
               </div>
             )}

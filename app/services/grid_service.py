@@ -1,3 +1,4 @@
+from __future__ import annotations
 import logging
 import random
 from selenium import webdriver
@@ -179,7 +180,7 @@ class GridService:
             logger.warning(f"Error closing Grid session: {e}")
 
     @staticmethod
-    def session_url(grid_url: str, session_id: str) -> str | None:
+    def session_url(grid_url: str, session_id: str):  # -> Optional[str]
         """经 Grid REST 获取现有 session 的当前 URL（不新建 driver，避免 Profile 锁竞争）。"""
         import urllib.request
         import json
@@ -195,7 +196,7 @@ class GridService:
             return None
 
     @staticmethod
-    def session_has_selector(grid_url: str, session_id: str, css_selector: str) -> bool | None:
+    def session_has_selector(grid_url: str, session_id: str, css_selector: str):  # -> Optional[bool]
         """经 Grid REST 在现有 session 中执行 JS 判断选择器是否存在；失败返回 None。"""
         import urllib.request
         import json
@@ -348,3 +349,81 @@ class GridService:
             "max_sessions": max_sessions,
             "message": f"{effective_count}/{max_sessions} sessions" if available else f"Full ({max_sessions}/{max_sessions})",
         }
+
+    @staticmethod
+    def list_active_grid_sessions(grid_url: str):  # -> list[str]
+        """Query Grid for all active session IDs on this node.
+        Returns a list of session_id strings. Returns empty list on failure.
+        """
+        import urllib.request
+        import json
+        try:
+            for endpoint in ("/wd/hub/status", "/status"):
+                try:
+                    resp = urllib.request.urlopen(f"{grid_url}{endpoint}", timeout=5)
+                    if resp.status != 200:
+                        continue
+                    data = json.loads(resp.read().decode())
+                    value = data.get("value", {})
+                    session_ids = []
+                    # Hub mode: nodes[].slots[].session.sessionId
+                    nodes = value.get("value", {}).get("nodes", [])
+                    if not nodes:
+                        nodes = value.get("nodes", [])
+                    for n in (nodes or []):
+                        for slot in n.get("slots", []):
+                            sess = slot.get("session")
+                            if sess and sess.get("sessionId"):
+                                session_ids.append(sess["sessionId"])
+                    return session_ids
+                except Exception:
+                    continue
+        except Exception as e:
+            logger.warning(f"Failed to list active sessions for {grid_url}: {e}")
+        return []
+
+    @staticmethod
+    def cleanup_orphan_sessions(grid_url: str, known_session_ids):  # known_session_ids: set[str]
+        """Delete Grid sessions that are NOT in the known set (zombie cleanup).
+        
+        Args:
+            grid_url: The Grid hub URL.
+            known_session_ids: Set of session IDs that should be kept alive.
+        Returns:
+            Number of orphan sessions cleaned up.
+        """
+        active = GridService.list_active_grid_sessions(grid_url)
+        cleaned = 0
+        for sid in active:
+            if sid not in known_session_ids:
+                try:
+                    GridService.delete_session(grid_url, sid)
+                    cleaned += 1
+                    logger.info(f"Cleaned up orphan Grid session: {sid} (node={grid_url})")
+                except Exception as e:
+                    logger.warning(f"Failed to clean orphan session {sid}: {e}")
+        if cleaned:
+            logger.info(f"Orphan cleanup: removed {cleaned} zombie sessions from {grid_url}")
+        return cleaned
+
+    @staticmethod
+    def force_cleanup_node(grid_url: str, max_retries: int = 2) -> int:
+        """Force-delete ALL active sessions on a Grid node (used for emergency cleanup).
+        Returns count of sessions deleted.
+        """
+        import time
+        active = GridService.list_active_grid_sessions(grid_url)
+        cleaned = 0
+        for sid in active:
+            for attempt in range(max_retries):
+                try:
+                    GridService.delete_session(grid_url, sid)
+                    cleaned += 1
+                    logger.info(f"Force-cleaned session {sid} from {grid_url}")
+                    break
+                except Exception as e:
+                    if attempt < max_retries - 1:
+                        time.sleep(1)
+                    else:
+                        logger.warning(f"Failed force-clean session {sid} after {max_retries} attempts: {e}")
+        return cleaned

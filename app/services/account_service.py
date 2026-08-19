@@ -1,3 +1,4 @@
+from __future__ import annotations
 import json
 import logging
 import os
@@ -52,7 +53,7 @@ class AccountService:
         account = AccountService.get_by_id(db, account_id)
         if not account:
             return None
-        for key in ("name", "platform", "notes", "grid_id", "login_indicator"):
+        for key in ("name", "platform", "notes", "grid_id", "login_indicator", "status"):
             if key in kwargs:
                 setattr(account, key, kwargs[key])
         account.updated_at = datetime.now(timezone.utc)
@@ -68,20 +69,11 @@ class AccountService:
             return False
         profile_path = account.profile_path
 
-        # 先关闭该账号未结束的 Grid 会话，释放 Profile 占用
-        for s in account.sessions:
-            if s.status in ("CREATING", "READY", "LOGIN", "RUNNING") and s.grid_session_id:
-                if account.grid:
-                    GridService.delete_session(account.grid.hub_url, s.grid_session_id)
-
-        # 清理关联数据：SessionAccount / BrowserSession / Task / Schedule
+        # 清理关联数据：SessionAccount / Task / Schedule
         from models import SessionAccount, Task, Schedule
         db.query(SessionAccount).filter(SessionAccount.account_id == account_id).delete()
         db.query(Task).filter(Task.account_id == account_id).delete()
         db.query(Schedule).filter(Schedule.account_id == account_id).delete()
-        # BrowserSession 由 Account.sessions cascade 处理，但显式删除以防万一
-        from models import BrowserSession
-        db.query(BrowserSession).filter(BrowserSession.account_id == account_id).delete()
 
         db.delete(account)
         db.commit()

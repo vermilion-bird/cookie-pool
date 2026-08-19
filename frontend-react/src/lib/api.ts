@@ -72,20 +72,13 @@ export const api = {
         method: 'POST',
         body: JSON.stringify(payload),
       }),
-    update: (id: number, payload: { name?: string; platform?: string; notes?: string; grid_id?: number | null; login_indicator?: string | null }) =>
+    update: (id: number, payload: { name?: string; platform?: string; notes?: string; grid_id?: number | null; login_indicator?: string | null; status?: string }) =>
       request<{ account: Account }>(`/api/accounts/${id}`, {
         method: 'PUT',
         body: JSON.stringify(payload),
       }),
     remove: (id: number) => request<{ status: string }>(`/api/accounts/${id}`, { method: 'DELETE' }),
     importCsv: (file: File) => upload<{ created: number; skipped: { name: string; reason: string }[] }>('/api/accounts/import', file),
-
-    startLogin: (id: number) =>
-      request<LoginStartResponse>(`/api/accounts/${id}/login`, { method: 'POST' }),
-    completeLogin: (id: number) =>
-      request<LoginCompleteResponse>(`/api/accounts/${id}/login/complete`, { method: 'POST' }),
-    cancelLogin: (id: number) =>
-      request<{ status: string }>(`/api/accounts/${id}/login/cancel`, { method: 'POST' }),
   },
 
   grids: {

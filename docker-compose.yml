@@ -20,14 +20,18 @@ services:
       - API_KEY=${API_KEY:-change-me}
       - HOST_ADDRESS=${HOST_ADDRESS:-127.0.0.1}
       - NOVNC_PORT=${NOVNC_PORT:-7901}
+      - HOST_ADDRESS=${HOST_ADDRESS:-127.0.0.1}
+      - VNC_PASSWORD=${VNC_PASSWORD:-}
     volumes:
       - ${DATA_DIR:-./data}:/data
+      - /opt/cookie-pool/data/profiles:/data/profiles
     depends_on:
       grid:
         condition: service_started
     restart: unless-stopped
     networks:
       - cp-network
+      - cookie-pool-net
 
   # ── Selenium Standalone Grid (hub + node + Chrome 合一) ──
   grid:
@@ -48,7 +52,11 @@ services:
     restart: unless-stopped
     networks:
       - cp-network
+      - cookie-pool-net
 
 networks:
   cp-network:
     driver: bridge
+  cookie-pool-net:
+    name: cookie-pool_cp-network
+    external: true

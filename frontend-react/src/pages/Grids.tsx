@@ -96,12 +96,12 @@ export function Grids() {
   return (
     <div className="space-y-6">
       {/* Page header */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-2 sm:gap-3">
         <div>
-          <h1 className="page-title">Grid Instances</h1>
-          <p className="page-subtitle">{grids.length} configured · {onlineGrids.length} online · {grids.reduce((s, g) => s + g.max_sessions, 0)} total slots</p>
+          <h1 className="page-title text-xl sm:text-2xl">Grid Instances</h1>
+          <p className="page-subtitle text-xs sm:text-sm">{grids.length} configured · {onlineGrids.length} online · {grids.reduce((s, g) => s + g.max_sessions, 0)} slots</p>
         </div>
-        <Button variant="success" onClick={() => setShowCreate(true)}>+ Add Grid</Button>
+        <Button variant="success" onClick={() => setShowCreate(true)}><span className="hidden sm:inline">+ Add Grid</span><span className="sm:hidden">+ Grid</span></Button>
       </div>
 
       {/* Grid list */}
@@ -185,17 +185,18 @@ function GridItem({
   checkLoading: boolean
 }) {
   return (
-    <div className="flex flex-wrap items-center gap-4 px-5 py-4 transition-colors hover:bg-gray-50/70 sm:gap-6">
+    <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4 px-4 sm:px-5 py-3 sm:py-4 transition-colors hover:bg-gray-50/70">
       {/* Name & Status */}
-      <div className="min-w-0 flex-[2]">
+      <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
           <span className="text-sm font-semibold text-ink truncate">{grid.name}</span>
           <Badge status={grid.status} />
         </div>
         <p className="mt-0.5 truncate font-mono text-xs text-ink-soft/40">{grid.hub_url}</p>
+        <p className="text-xs text-ink-soft/50 sm:hidden mt-0.5">{grid.max_sessions} slots · {fmtDate(grid.created_at)}</p>
       </div>
 
-      {/* Info */}
+      {/* Info - desktop only */}
       <div className="hidden sm:flex items-center gap-4 text-xs text-ink-soft/50">
         <span title="Max concurrent sessions">{grid.max_sessions} slot(s)</span>
         <span>{fmtDate(grid.created_at)}</span>
@@ -203,16 +204,16 @@ function GridItem({
       </div>
 
       {/* Actions */}
-      <div className="flex items-center gap-1.5">
+      <div className="flex items-center gap-1 sm:gap-1.5 flex-wrap">
         <Button variant="outline" size="sm" loading={checkLoading} onClick={onCheck}>
-          Check Health
+          <span className="hidden sm:inline">Check Health</span><span className="sm:hidden">Check</span>
         </Button>
         <Button variant="ghost" size="sm" onClick={onEdit}>
           Edit
         </Button>
         <button
           onClick={onDelete}
-          className="flex h-8 w-8 items-center justify-center rounded-lg text-ink-soft/30 transition-colors hover:bg-red-50 hover:text-red-500"
+          className="flex h-7 w-7 sm:h-8 sm:w-8 items-center justify-center rounded-lg text-ink-soft/30 transition-colors hover:bg-red-50 hover:text-red-500"
           title={`Delete ${grid.name}`}
           disabled={grid.id === 1}
         >

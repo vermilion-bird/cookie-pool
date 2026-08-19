@@ -179,6 +179,7 @@ export interface SessionV2 {
   status: SessionV2Status
   profile_path: string
   novnc_url: string | null
+  vnc_password?: string
   created_at: string | null
   closed_at: string | null
   accounts: SessionV2Account[]

@@ -141,3 +141,27 @@ def check_grid_capacity(grid_id: int, db: Session = Depends(get_db)):
     from api.sessions_v2 import _live_drivers
     cap = grid_service.check_capacity(grid, _live_drivers)
     return {"grid_id": grid_id, "name": grid.name, **cap}
+
+
+@router.get("/{grid_id}/heartbeat")
+def get_grid_heartbeat(grid_id: int, db: Session = Depends(get_db)):
+    """获取节点心跳详情（含连续失败计数）。"""
+    grid = db.query(GridInstance).filter(GridInstance.id == grid_id).first()
+    if not grid:
+        raise HTTPException(status_code=404, detail="Grid not found")
+    from services.node_heartbeat import heartbeat
+    health = heartbeat.get_node_health(grid_id)
+    if health is None:
+        raise HTTPException(status_code=404, detail="Node health info not available")
+    return health
+
+
+@router.post("/{grid_id}/force-cleanup")
+def force_cleanup_grid(grid_id: int, db: Session = Depends(get_db)):
+    """紧急清理：强制删除 Grid 节点上所有活跃 session（仅管理员使用）。"""
+    grid = db.query(GridInstance).filter(GridInstance.id == grid_id).first()
+    if not grid:
+        raise HTTPException(status_code=404, detail="Grid not found")
+    removed = GridService.force_cleanup_node(grid.hub_url)
+    logger.warning(f"Force cleanup of grid '{grid.name}': removed {removed} session(s)")
+    return {"grid_id": grid_id, "name": grid.name, "removed_sessions": removed}

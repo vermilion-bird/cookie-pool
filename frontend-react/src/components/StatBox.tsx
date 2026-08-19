@@ -20,19 +20,19 @@ export function StatBox({ label, value, icon, accent }: StatBoxProps) {
   return (
     <div
       className={clsx(
-        'relative flex min-w-[130px] flex-1 items-center gap-4 rounded-xl border border-gray-100 bg-white p-4 shadow-card',
+        'relative flex flex-1 items-center gap-3 sm:gap-4 rounded-xl border border-gray-100 bg-white p-3 sm:p-4 shadow-card',
         cfg?.border && 'border-l-4',
         cfg?.border
       )}
     >
-      {icon && <div className="text-2xl opacity-60">{icon}</div>}
-      <div className="flex-1">
-        <div className={clsx('text-2xl font-bold tracking-tight', accent === 'active' && 'text-emerald-700', accent === 'inuse' && 'text-blue-700', accent === 'expired' && 'text-red-700', accent === 'wait' && 'text-amber-700', !accent && 'text-ink')}>
+      {icon && <div className="text-lg sm:text-2xl opacity-60">{icon}</div>}
+      <div className="flex-1 min-w-0">
+        <div className={clsx('text-lg sm:text-2xl font-bold tracking-tight truncate', accent === 'active' && 'text-emerald-700', accent === 'inuse' && 'text-blue-700', accent === 'expired' && 'text-red-700', accent === 'wait' && 'text-amber-700', !accent && 'text-ink')}>
           {value}
         </div>
-        <div className="mt-0.5 text-[0.7rem] font-medium uppercase tracking-wider text-ink-soft/60">{label}</div>
+        <div className="mt-0.5 text-[0.6rem] sm:text-[0.7rem] font-medium uppercase tracking-wider text-ink-soft/60 truncate">{label}</div>
       </div>
-      {cfg && <span className={clsx('h-1.5 w-1.5 rounded-full', cfg.dot)} />}
+      {cfg && <span className={clsx('h-1.5 w-1.5 rounded-full shrink-0', cfg.dot)} />}
     </div>
   )
 }

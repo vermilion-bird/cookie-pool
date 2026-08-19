@@ -6,6 +6,54 @@
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-08-19 — 上线前加固
+
+### Fixed
+
+- **SessionSweeper 误杀修复**：LOGIN 超时改用 driver liveness 双重检查，alive driver 跳过并重置 timer
+- **restart_session/start_login Grid 孤儿清理**：丢失 driver handle 后重建前强制删除 Grid 孤儿 session
+- **complete_login 账号恢复**：LOGIN_EXPIRED 状态在 Complete 后自动恢复 ACTIVE
+- **noVNC URL 端口修正**：内部 Grid 优先使用全局 HOST_ADDRESS + NOVNC_PORT
+- **Watchdog 重启前清理 Grid 孤儿**：避免 Grid 满槽失败
+- **Watchdog datetime 兼容**：修复 offset-naive vs offset-aware 异常
+
+### Added
+
+- **VNC 密码支持**：VNC_PASSWORD 环境变量，Session/Grid API 返回 vnc_password
+- **VNC 密码界面展示**：Sessions Detail 弹窗显示密码 + 一键复制
+
+### Changed
+
+- **前端移动端优化**：汉堡菜单 + 底部 Tab + Modal 全屏 + 响应式列表
+- **Sweeper LOGIN 超时**：30min → 120min
+- **测试覆盖**：新增 test_regression.py 17 测试，全量 70 tests 100%
+
+## [0.5.1] - 2026-08-14 — 稳定性加固
+
+### Added
+
+- **Node Heartbeat 服务**（`app/services/node_heartbeat.py`）：30s 周期探测所有 Grid 节点，自动更新 DB 状态（ONLINE/OFFLINE/DEGRADED），连续 3 次失败触发 Webhook 告警
+- **Grid 僵尸 Session 清理**：SessionSweeper 和 Watchdog 每轮扫描 Grid 端孤儿 session，自动调用 Grid REST API 关闭未被 DB 记录的 Chrome 进程
+- **Session 最大生命周期保护**：Watchdog 对运行超过 24h 的 session 强制标记 FAILED + 释放 Grid 资源（可配 `SESSION_MAX_LIFETIME_HOURS`）
+- **Grid 紧急清理端点**：`POST /api/grids/{id}/force-cleanup` — 强制删除节点上所有活跃 session
+- **节点心跳详情端点**：`GET /api/grids/{id}/heartbeat` — 查看节点连续失败计数和最后更新时间
+- **Cookie 提取重试机制**：`_extract_session_cookies` 最多 3 次重试（指数退避 1s/2s/4s），CDP 失败回退 Selenium get_cookies()
+- **Session 级别互斥锁**：`start_login` 和 `restart` 操作获取 per-session Lock（30s 超时），防止并发创建 driver 导致 Profile 损坏
+- **稳定性配置项**：`NODE_HEARTBEAT_INTERVAL`、`SESSION_MAX_LIFETIME_HOURS`、`COOKIE_EXTRACT_MAX_RETRIES`、`ZOMBIE_CLEANUP_INTERVAL` 等环境变量
+
+### Changed
+
+- `/health` 端点增强：返回节点状态一览、活跃 session 计数、后台服务运行状态
+- `_close_driver` 增强：同时清理 `_session_locks`，driver.quit() 失败不阻塞后续操作
+- `_resolve_novnc_url` 增加空值校验和格式验证
+- SessionSweeper 每次 sweep 增加一轮 Grid 僵尸扫描
+
+### Fixed
+
+- 修复潜在 Session 泄漏：Watchdog 检测到 driver 死掉时增加 Grid REST 清理兜底
+- 修复可能的 Profile 损坏：start_login/restart 加锁防止并发
+- 修复 `_reconnect_via_grid` 临时 session 残留
+
 ### 规划中（v0.5.1+ — Phase 3 补全）
 
 - 列表分页与服务端过滤（Accounts / Tasks / Schedules）

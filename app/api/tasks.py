@@ -1,9 +1,12 @@
+from __future__ import annotations
 import json
 import logging
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
+from typing import List, Optional
+
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -27,7 +30,7 @@ class TaskCreate(BaseModel):
 
 
 class BatchTaskRequest(BaseModel):
-    task_ids: list[int]
+    task_ids: List[int]
 
 
 def _validate_payload(task_type: str, params: str) -> None:

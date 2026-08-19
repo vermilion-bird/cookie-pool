@@ -1,8 +1,13 @@
 from datetime import datetime, timezone
 from sqlalchemy import Boolean, Column, Integer, String, DateTime, Text, ForeignKey, UniqueConstraint
 from sqlalchemy.orm import relationship
+import os
 
 from database import Base
+
+def _get_vnc_password() -> str:
+    """读取 VNC 密码（由 SE_VNC_PASSWORD 环境变量注入）。"""
+    return os.getenv("VNC_PASSWORD", "")
 
 class Schedule(Base):
     """cron 定时调度：按计划为目标账号创建任务。account_id 为空 = 所有 ACTIVE 账号。"""
@@ -72,6 +77,7 @@ class GridInstance(Base):
             "status": self.status,
             "max_sessions": self.max_sessions,
             "notes": self.notes,
+            "vnc_password": _get_vnc_password(),
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }
@@ -98,7 +104,6 @@ class Account(Base):
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc),
                         onupdate=lambda: datetime.now(timezone.utc))
 
-    sessions = relationship("BrowserSession", back_populates="account", cascade="all, delete-orphan")
     tasks = relationship("Task", back_populates="account", cascade="all, delete-orphan")
     schedules = relationship("Schedule", back_populates="account", cascade="all, delete-orphan")
     grid = relationship("GridInstance", back_populates="accounts")
@@ -124,32 +129,7 @@ class Account(Base):
         return d
 
 
-class BrowserSession(Base):
-    __tablename__ = "browser_sessions"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    account_id = Column(Integer, ForeignKey("accounts.id"), nullable=False)
-    grid_session_id = Column(String(128), nullable=True)
-    novnc_url = Column(String(512), nullable=True)
-    status = Column(String(32), nullable=False, default="CREATING")
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
-    closed_at = Column(DateTime, nullable=True)
-
-    account = relationship("Account", back_populates="sessions")
-
-    def to_dict(self):
-        return {
-            "id": self.id,
-            "account_id": self.account_id,
-            "grid_session_id": self.grid_session_id,
-            "novnc_url": self.novnc_url,
-            "status": self.status,
-            "created_at": self.created_at.isoformat() if self.created_at else None,
-            "closed_at": self.closed_at.isoformat() if self.closed_at else None,
-        }
-
-
-# ── 新版常驻 Session：一个 Chrome 浏览器承载多个不同平台的 Account ──
+# ── 常驻 Session：一个 Chrome 浏览器承载多个不同平台的 Account ──
 
 class Session(Base):
     """常驻浏览器会话。启动后保持 Chrome 存活，可绑定多个不同平台的 Account，
@@ -183,6 +163,7 @@ class Session(Base):
             "status": self.status,
             "profile_path": self.profile_path,
             "novnc_url": self.novnc_url,
+            "vnc_password": _get_vnc_password(),
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "closed_at": self.closed_at.isoformat() if self.closed_at else None,
             "accounts": [sa.to_dict() for sa in self.accounts] if self.accounts else [],

@@ -1,3 +1,4 @@
+from __future__ import annotations
 """cron 调度线程：周期 tick，为匹配的 Schedule 创建任务并入队。"""
 import logging
 import threading
@@ -17,7 +18,11 @@ class SchedulerThread:
     def __init__(self, tick_seconds: int = 30):
         self.tick_seconds = tick_seconds
         self._running = False
-        self._thread: threading.Thread | None = None
+        self._thread = None  # type: threading.Thread | None
+
+    @property
+    def running(self) -> bool:
+        return self._running
 
     def start(self) -> None:
         if self._running:

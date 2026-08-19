@@ -55,12 +55,12 @@ export function Dashboard() {
 
       {/* Stats row */}
       {acctLoading ? (
-        <div className="mb-6 flex flex-wrap gap-4">
-          {[1,2,3,4].map(i => <div key={i} className="h-24 min-w-[130px] flex-1 animate-pulse rounded-xl bg-white shadow-card" />)}
+        <div className="mb-6 grid grid-cols-2 sm:flex sm:flex-wrap gap-3 sm:gap-4">
+          {[1,2,3,4].map(i => <div key={i} className="h-20 sm:h-24 animate-pulse rounded-xl bg-white shadow-card" />)}
         </div>
       ) : (
-        <div className="mb-8 flex flex-wrap gap-4">
-          <StatBox label="Total Accounts" value={accounts.length} icon="📊" />
+        <div className="mb-8 grid grid-cols-2 sm:flex sm:flex-wrap gap-3 sm:gap-4">
+          <StatBox label="Total" value={accounts.length} icon="📊" />
           <StatBox label="Active" value={activeCount} accent="active" icon="✅" />
           <StatBox label="In Use" value={inUseCount} accent="inuse" icon="🔒" />
           <StatBox label="Waiting" value={waitCount} accent="wait" icon="⏳" />

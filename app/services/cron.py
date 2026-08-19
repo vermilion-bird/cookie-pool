@@ -1,3 +1,4 @@
+from __future__ import annotations
 """轻量 cron 解析与匹配（5 段：分 时 日 月 周）。
 
 支持语法：
@@ -17,7 +18,7 @@ logger = logging.getLogger(__name__)
 RANGES = {"minute": (0, 59), "hour": (0, 23), "dom": (1, 31), "month": (1, 12), "dow": (1, 7)}
 
 
-def parse_field(field: str, lo: int, hi: int) -> set | None:
+def parse_field(field: str, lo: int, hi: int):  # -> Optional[set]
     """解析单个字段；返回允许值集合，'*' 返回 None 表示任意。"""
     field = field.strip()
     if not field or field == "*":

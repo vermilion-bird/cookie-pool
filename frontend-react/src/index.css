@@ -42,3 +42,34 @@
     @apply flex items-center gap-4 border-b border-gray-100 px-5 py-3.5 transition-colors last:border-b-0 hover:bg-gray-50/70;
   }
 }
+
+@layer utilities {
+  /* Safe area padding for bottom nav on notched phones */
+  .safe-bottom {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  /* Prevent text scaling on orientation change in iOS */
+  .text-size-adjust {
+    -webkit-text-size-adjust: 100%;
+  }
+  /* Touch-friendly tap target minimum */
+  .tap-target {
+    @apply min-h-[44px] min-w-[44px];
+  }
+}
+
+/* Extra small breakpoint not in Tailwind defaults */
+@media (min-width: 400px) {
+  .xs\:inline { display: inline; }
+  .xs\:block { display: block; }
+}
+
+/* Smooth mobile tap highlight */
+@media (hover: none) and (pointer: coarse) {
+  * {
+    -webkit-tap-highlight-color: transparent;
+  }
+  input, select, textarea, button {
+    font-size: 16px !important; /* Prevent iOS zoom on focus */
+  }
+}

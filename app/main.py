@@ -15,6 +15,7 @@ from version import __version__
 from worker import worker, sweeper
 from scheduler import scheduler
 from session_watchdog import watchdog
+from services.node_heartbeat import heartbeat
 
 logging.basicConfig(level=getattr(logging, LOG_LEVEL.upper(), logging.INFO),
                     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
@@ -31,8 +32,10 @@ async def lifespan(app: FastAPI):
         sweeper.start()
         scheduler.start()
         watchdog.start()
+        heartbeat.start()
     logger.info("Cookie Pool started (version %s)", app.version)
     yield
+    heartbeat.stop()
     scheduler.stop()
     sweeper.stop()
     worker.stop()
@@ -79,6 +82,7 @@ app.include_router(audit_router, prefix="/api", tags=["audit"])
 
 @app.get("/health")
 async def health():
+    """健康检查端点。返回整体状态 + 各组件详情。"""
     db_ok = True
     try:
         with SessionLocal() as db:
@@ -86,10 +90,45 @@ async def health():
     except Exception as e:
         logger.warning("Health check: database error: %s", e)
         db_ok = False
+
+    # 节点状态概览
+    nodes_status = {}
+    try:
+        with SessionLocal() as db:
+            from models import GridInstance
+            nodes = db.query(GridInstance).all()
+            for n in nodes:
+                nodes_status[n.name] = n.status
+    except Exception:
+        pass
+
+    # 活跃 session 计数
+    active_sessions = 0
+    try:
+        with SessionLocal() as db:
+            from models import Session as SessionV2
+            active_sessions = db.query(SessionV2).filter(
+                SessionV2.status.in_(["ACTIVE", "LOGIN"])
+            ).count()
+    except Exception:
+        pass
+
+    all_nodes_ok = all(s == "ONLINE" for s in nodes_status.values()) if nodes_status else True
+    overall = "ok" if (db_ok and all_nodes_ok) else "degraded"
+
     return {
-        "status": "ok" if db_ok else "degraded",
+        "status": overall,
         "version": app.version,
         "database": "ok" if db_ok else "error",
+        "nodes": nodes_status,
+        "active_sessions": active_sessions,
+        "background_services": {
+            "worker": worker.running,
+            "sweeper": sweeper.running,
+            "scheduler": scheduler.running,
+            "watchdog": watchdog.running,
+            "heartbeat": heartbeat.running,
+        },
     }
 
 

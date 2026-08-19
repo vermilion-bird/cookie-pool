@@ -1,3 +1,4 @@
+from __future__ import annotations
 """任务执行器注册表：业务任务按 task.type 注册执行器，worker 依注册表调度。"""
 import json
 import logging
